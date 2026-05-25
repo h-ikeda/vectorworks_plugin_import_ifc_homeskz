@@ -4,8 +4,6 @@
 
 ## インストール
 
-### 1. パッケージを Python Externals フォルダにインストール
-
 このリポジトリをクローンまたはダウンロードし、リポジトリのルートで以下を実行します。
 
 **macOS**
@@ -20,31 +18,13 @@ pip install --target "%APPDATA%\Nemetschek\Vectorworks\2025\Python Externals" .
 
 > VectorWorks のバージョンが異なる場合は `2025` の部分を実際のバージョン番号に置き換えてください。
 
-### 2. VectorWorks にラッパースクリプトを登録
+Python Externals フォルダは VectorWorks が自動的に `sys.path` に追加するため、インストール後は追加の設定なしにパッケージを参照できます。
 
-VectorWorks のプラグインスクリプトとして以下のコードを登録してください。  
-`main.py` の内容と同じです。
+## VectorWorks へのスクリプト登録
+
+VectorWorks のプラグインスクリプトとして以下のコードを登録してください（`main.py` と同じ内容です）。
 
 ```python
-import sys
-import os
-
-if sys.platform == 'darwin':
-    _externals = os.path.join(
-        os.path.expanduser('~'),
-        'Library', 'Application Support', 'Vectorworks', '2025',
-        'Python Externals',
-    )
-else:
-    _externals = os.path.join(
-        os.environ.get('APPDATA', ''),
-        'Nemetschek', 'Vectorworks', '2025',
-        'Python Externals',
-    )
-
-if _externals not in sys.path:
-    sys.path.insert(0, _externals)
-
 import vw_import_ifc_homeskz
 vw_import_ifc_homeskz.run()
 ```
