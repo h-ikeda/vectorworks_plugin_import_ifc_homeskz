@@ -5,7 +5,7 @@ from unittest.mock import MagicMock, patch
 import ifcopenshell
 import pytest
 
-from vw_import_ifc_homeskz.grid import (
+from vectorworks_plugin_import_ifc_homeskz.grid import (
     CLASS_X,
     CLASS_Y,
     determine_class,
@@ -137,7 +137,7 @@ class TestRun:
 
         with patch.dict('sys.modules', {'vs': vs_mock}):
             import importlib
-            import vw_import_ifc_homeskz.grid as grid_module
+            import vectorworks_plugin_import_ifc_homeskz.grid as grid_module
             importlib.reload(grid_module)
             grid_module.run()
 
@@ -159,7 +159,7 @@ class TestRun:
 
             with patch.dict('sys.modules', {'vs': vs_mock}):
                 import importlib
-                import vw_import_ifc_homeskz.grid as grid_module
+                import vectorworks_plugin_import_ifc_homeskz.grid as grid_module
                 importlib.reload(grid_module)
                 grid_module.run()
 
@@ -175,7 +175,7 @@ class TestRun:
 
         with patch.dict('sys.modules', {'vs': vs_mock}):
             import importlib
-            import vw_import_ifc_homeskz.grid as grid_module
+            import vectorworks_plugin_import_ifc_homeskz.grid as grid_module
             importlib.reload(grid_module)
             grid_module.run()
 

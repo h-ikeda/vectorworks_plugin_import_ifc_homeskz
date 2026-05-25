@@ -15,7 +15,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ```
 src/
-    vw_import_ifc_homeskz/   # pip インストール可能なパッケージ本体
+    vectorworks_plugin_import_ifc_homeskz/   # pip インストール可能なパッケージ本体
         __init__.py           # run() を公開
         grid.py               # グリッド線インポートのロジック
 main.py                      # VectorWorks から呼び出すラッパースクリプト
@@ -33,13 +33,13 @@ pyproject.toml               # パッケージメタデータ
 VectorWorks の組み込み Python は pip パッケージを標準では参照しませんが、Python Externals フォルダは VectorWorks が自動的に `sys.path` に追加します。このため以下の手順だけで外部ライブラリを利用できます。
 
 1. `pip install --target <Python Externals フォルダ> .` でパッケージ（および依存ライブラリ）を Python Externals フォルダにインストールする。
-2. VectorWorks から呼び出される `main.py`（ラッパー）が `vw_import_ifc_homeskz.run()` を呼び出す。
+2. VectorWorks から呼び出される `main.py`（ラッパー）が `vectorworks_plugin_import_ifc_homeskz.run()` を呼び出す。
 
 Python Externals フォルダのパスは OS・VectorWorks のバージョンによって異なります（詳細は `README.md` 参照）。新しい外部ライブラリへの依存を追加するときは `pyproject.toml` の `[project] dependencies` に記載してください。
 
 ## スクリプトの処理フロー（grid.py）
 
-`src/vw_import_ifc_homeskz/grid.py` の `run()` が以下の 5 フェーズで実行されます。
+`src/vectorworks_plugin_import_ifc_homeskz/grid.py` の `run()` が以下の 5 フェーズで実行されます。
 
 1. **ファイル選択** — `vs.GetFileN()` でネイティブのファイルダイアログを開き、ユーザーが `.ifc` ファイルを選択します。
 2. **IFC 解析** — ファイルをプレーンテキストとして読み込み、改行をすべて除去してから `;` でステートメントに分割します。3 種類の正規表現で以下を抽出します。

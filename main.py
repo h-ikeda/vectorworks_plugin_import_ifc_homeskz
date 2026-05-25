@@ -1,2 +1,2 @@
-import vw_import_ifc_homeskz
-vw_import_ifc_homeskz.run()
+import vectorworks_plugin_import_ifc_homeskz
+vectorworks_plugin_import_ifc_homeskz.run()
