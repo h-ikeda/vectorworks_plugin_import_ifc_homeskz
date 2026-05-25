@@ -1,0 +1,10 @@
+# VectorWorks 公式 vs.py スタブ（CI でダウンロード）
+tests/vs.py
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+dist/
+build/
+.pytest_cache/
