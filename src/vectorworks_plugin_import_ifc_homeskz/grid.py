@@ -1,9 +1,8 @@
-import ifcopenshell
-
 import vs
 
 CLASS_X = '01作図-01線-01基準線-01通り芯-X通り'
 CLASS_Y = '01作図-01線-01基準線-01通り芯-Y通り'
+TARGET_LAYER = '共通'
 
 
 def resolve_lines(ifc_file):
@@ -61,58 +60,44 @@ def determine_class(name, cx1, cy1, cx2, cy2):
         return CLASS_X if abs(cx1 - cx2) < abs(cy1 - cy2) else CLASS_Y
 
 
-def run():
-    ok, filepath = vs.GetFileN("IFCファイルを選択してください", "", "ifc")
-    if not ok:
-        vs.AlrtDialog("キャンセルされました。")
-        return
+def import_grids(ifc_file):
+    """IFC ファイルから通り芯 (IfcGridAxis) を VectorWorks に描画し、描画本数を返す。"""
+    lines_to_draw, center_x, center_y = resolve_lines(ifc_file)
 
-    try:
-        vs.Message("IFCデータを解析中...")
+    if vs.GetObject(TARGET_LAYER) == vs.Handle(0):
+        vs.CreateLayer(TARGET_LAYER, 1)
+    vs.Layer(TARGET_LAYER)
 
-        ifc_file = ifcopenshell.open(filepath)
-        lines_to_draw, center_x, center_y = resolve_lines(ifc_file)
+    count = 0
+    for x1, y1, x2, y2, name in lines_to_draw:
+        cx1, cy1 = x1 - center_x, y1 - center_y
+        cx2, cy2 = x2 - center_x, y2 - center_y
 
-        target_layer = '共通'
-        if vs.GetObject(target_layer) == vs.Handle(0):
-            vs.CreateLayer(target_layer, 1)
-        vs.Layer(target_layer)
+        current_class = determine_class(name, cx1, cy1, cx2, cy2)
 
-        count = 0
-        for x1, y1, x2, y2, name in lines_to_draw:
-            cx1, cy1 = x1 - center_x, y1 - center_y
-            cx2, cy2 = x2 - center_x, y2 - center_y
+        vs.BeginPoly()
+        vs.MoveTo(cx1, cy1)
+        vs.LineTo(cx2, cy2)
+        vs.EndPoly()
+        path_handle = vs.LNewObj()
 
-            current_class = determine_class(name, cx1, cy1, cx2, cy2)
+        vs.BeginGroup()
+        vs.EndGroup()
+        profile_handle = vs.LNewObj()
 
-            vs.BeginPoly()
+        grid_obj = vs.CreateCustomObjectPath('GridAxis', path_handle, profile_handle)
+
+        if grid_obj != vs.Handle(0):
+            vs.SetClass(grid_obj, current_class)
+            vs.SetRField(grid_obj, 'GridAxis', 'Label', name)
+            vs.SetRField(grid_obj, 'GridAxis', 'ShowBubbleAt', 'Start Point')
+            vs.ResetObject(grid_obj)
+        else:
             vs.MoveTo(cx1, cy1)
             vs.LineTo(cx2, cy2)
-            vs.EndPoly()
-            path_handle = vs.LNewObj()
+            fallback_line = vs.LNewObj()
+            vs.SetClass(fallback_line, current_class)
 
-            vs.BeginGroup()
-            vs.EndGroup()
-            profile_handle = vs.LNewObj()
+        count += 1
 
-            grid_obj = vs.CreateCustomObjectPath('GridAxis', path_handle, profile_handle)
-
-            if grid_obj != vs.Handle(0):
-                vs.SetClass(grid_obj, current_class)
-                vs.SetRField(grid_obj, 'GridAxis', 'Label', name)
-                vs.SetRField(grid_obj, 'GridAxis', 'ShowBubbleAt', 'Start Point')
-                vs.ResetObject(grid_obj)
-            else:
-                vs.MoveTo(cx1, cy1)
-                vs.LineTo(cx2, cy2)
-                fallback_line = vs.LNewObj()
-                vs.SetClass(fallback_line, current_class)
-
-            count += 1
-
-        vs.ClrMessage()
-        vs.AlrtDialog(f"読込完了: 「{target_layer}」レイヤに、{count} 本の通り芯をそれぞれのクラスに振り分けて配置しました。")
-
-    except Exception as e:
-        vs.ClrMessage()
-        vs.AlrtDialog(f"エラーが発生しました: {str(e)}")
+    return count
