@@ -142,6 +142,10 @@ class TestImportStories:
 
         assert count == 3
 
+        # レベルタイプが事前に登録されていること
+        level_type_names = [call.args[0] for call in vs_mock.CreateLayerLevelType.call_args_list]
+        assert level_type_names == ['FL', '横架材天端', '軒高']
+
         story_names = [call.args[0] for call in vs_mock.CreateStory.call_args_list]
         assert story_names == ['1階', '2階', '屋根']
 

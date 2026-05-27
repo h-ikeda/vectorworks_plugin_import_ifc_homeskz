@@ -93,6 +93,12 @@ def import_stories(ifc_file):
     if not stories:
         return 0
 
+    # レベルタイプを VW に登録する。未登録のまま SetLayerLevelType / AssociateLayerWithStory
+    # を呼ぶとレイヤがストーリ基準座標系に切り替わらず、相対高さが反映されない。
+    vs.CreateLayerLevelType(LEVEL_FL)
+    vs.CreateLayerLevelType(LEVEL_BEAM_TOP)
+    vs.CreateLayerLevelType(LEVEL_EAVES)
+
     n = len(stories)
     count = 0
     for i, (elevation, beam_offset) in enumerate(stories):
