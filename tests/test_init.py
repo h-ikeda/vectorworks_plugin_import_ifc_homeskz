@@ -32,6 +32,8 @@ def _make_vs_mock():
     vs_mock.CreateLayer.side_effect = create_layer
     vs_mock.LNewObj.return_value = None
     vs_mock.CreateCustomObjectPath.return_value = None
+    vs_mock.GetStoryElevationN.return_value = 0.0
+    vs_mock.GetLayerElevationN.return_value = (0.0, 0.0)
     return vs_mock
 
 

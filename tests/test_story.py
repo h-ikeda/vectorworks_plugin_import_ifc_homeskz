@@ -121,6 +121,8 @@ def _make_stateful_vs_mock():
     vs_mock.GetObject.side_effect = get_obj
     vs_mock.CreateStory.side_effect = create_story
     vs_mock.CreateLayer.side_effect = create_layer
+    vs_mock.GetStoryElevationN.return_value = 0.0
+    vs_mock.GetLayerElevationN.return_value = (0.0, 0.0)
     return vs_mock
 
 
@@ -138,7 +140,8 @@ class TestImportStories:
         with patch.dict('sys.modules', {'vs': vs_mock}):
             import vectorworks_plugin_import_ifc_homeskz.story as story_module
             importlib.reload(story_module)
-            count = story_module.import_stories(ifc)
+            result = story_module.import_stories(ifc)
+            count = result[0] if isinstance(result, tuple) else result
 
         assert count == 3
 
@@ -201,7 +204,8 @@ class TestImportStories:
         with patch.dict('sys.modules', {'vs': vs_mock}):
             import vectorworks_plugin_import_ifc_homeskz.story as story_module
             importlib.reload(story_module)
-            count = story_module.import_stories(ifc)
+            result = story_module.import_stories(ifc)
+            count = result[0] if isinstance(result, tuple) else result
 
         assert count == 0
         vs_mock.CreateStory.assert_not_called()
@@ -215,7 +219,8 @@ class TestImportStories:
         with patch.dict('sys.modules', {'vs': vs_mock}):
             import vectorworks_plugin_import_ifc_homeskz.story as story_module
             importlib.reload(story_module)
-            count = story_module.import_stories(ifc)
+            result = story_module.import_stories(ifc)
+            count = result[0] if isinstance(result, tuple) else result
 
         assert count == 1
         story_names = [call.args[0] for call in vs_mock.CreateStory.call_args_list]

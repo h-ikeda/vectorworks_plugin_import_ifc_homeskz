@@ -73,8 +73,7 @@ def create_story_layer(story_handle, level_type, elevation, layer_name):
     """ストーリレベル付きのデザインレイヤを作成し、レイヤハンドルを返す。
 
     処理順序: レイヤ作成 → レベルタイプ設定 → ストーリ関連付け → ストーリレベル追加 → 高さ強制上書き。
-    高さ系 API は N 付き (document units) を使う。N 無し版は内部単位 (inch) で解釈されるため
-    mm 値を渡すと範囲外と判定されて結果が 0 になる。
+    高さ系 API は N 付き (document units) を使う。
     """
     layer_h = vs.GetObject(layer_name)
     if layer_h == vs.Handle(0):
@@ -90,10 +89,14 @@ def create_story_layer(story_handle, level_type, elevation, layer_name):
 
 
 def import_stories(ifc_file):
-    """IFC からストーリ・ストーリレベル・デザインレイヤを生成し、作成階数を返す。"""
+    """IFC からストーリ・ストーリレベル・デザインレイヤを生成し、(階数, 診断情報) を返す。
+
+    診断情報は [(story_name, intended_elev, actual_elev, [(layer_name, intended_z, actual_z), ...])] 形式。
+    実機での値が意図通り設定されているか検証するためのもの。
+    """
     stories = collect_stories(ifc_file)
     if not stories:
-        return 0
+        return 0, []
 
     # レベルタイプを VW に登録する。未登録のまま SetLayerLevelType / AssociateLayerWithStory
     # を呼ぶとレイヤがストーリ基準座標系に切り替わらず、相対高さが反映されない。
@@ -103,6 +106,7 @@ def import_stories(ifc_file):
 
     n = len(stories)
     count = 0
+    diagnostics = []
     for i, (elevation, beam_offset) in enumerate(stories):
         is_top = i == n - 1
         story_name = story_name_for(i, is_top)
@@ -115,17 +119,30 @@ def import_stories(ifc_file):
             continue
 
         prefix = layer_prefix_for(i, is_top)
+        layer_specs = []
         if is_top:
-            create_story_layer(story_h, LEVEL_EAVES, 0.0, f'{prefix}-{LEVEL_EAVES}')
+            lh = create_story_layer(story_h, LEVEL_EAVES, 0.0, f'{prefix}-{LEVEL_EAVES}')
+            layer_specs.append((f'{prefix}-{LEVEL_EAVES}', 0.0, lh))
         else:
-            create_story_layer(story_h, LEVEL_FL, 0.0, f'{prefix}-{LEVEL_FL}')
-            create_story_layer(story_h, LEVEL_BEAM_TOP, beam_offset, f'{prefix}-{LEVEL_BEAM_TOP}')
+            lh1 = create_story_layer(story_h, LEVEL_FL, 0.0, f'{prefix}-{LEVEL_FL}')
+            layer_specs.append((f'{prefix}-{LEVEL_FL}', 0.0, lh1))
+            lh2 = create_story_layer(story_h, LEVEL_BEAM_TOP, beam_offset, f'{prefix}-{LEVEL_BEAM_TOP}')
+            layer_specs.append((f'{prefix}-{LEVEL_BEAM_TOP}', beam_offset, lh2))
 
-        # ストーリ高さはレイヤ関連付けの「後」に設定する。先に設定するとレイヤ作成中の
-        # AssociateLayerWithStory / AddStoryLevel が内部状態を書き換える過程でリセット
-        # されるケースがあり、結果としてストーリも紐づくデザインレイヤも高さ 0 になる。
+        # ストーリ高さはレイヤ関連付けの「後」に設定する。
         vs.SetStoryElevationN(story_h, elevation)
+
+        # 診断: 実際に設定された値を取得
+        actual_story_elev = vs.GetStoryElevationN(story_h)
+        layer_diag = []
+        for lname, intended_z, lh in layer_specs:
+            if lh != vs.Handle(0):
+                actual_z, _ = vs.GetLayerElevationN(lh)
+            else:
+                actual_z = None
+            layer_diag.append((lname, intended_z, actual_z))
+        diagnostics.append((story_name, elevation, actual_story_elev, layer_diag))
 
         count += 1
 
-    return count
+    return count, diagnostics
