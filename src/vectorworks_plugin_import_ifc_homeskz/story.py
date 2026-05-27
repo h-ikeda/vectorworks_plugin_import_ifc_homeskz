@@ -112,14 +112,17 @@ def import_stories(ifc_file):
         if story_h == vs.Handle(0):
             continue
 
-        vs.SetStoryElevation(story_h, elevation)
-
         prefix = layer_prefix_for(i, is_top)
         if is_top:
             create_story_layer(story_h, LEVEL_EAVES, 0.0, f'{prefix}-{LEVEL_EAVES}')
         else:
             create_story_layer(story_h, LEVEL_FL, 0.0, f'{prefix}-{LEVEL_FL}')
             create_story_layer(story_h, LEVEL_BEAM_TOP, beam_offset, f'{prefix}-{LEVEL_BEAM_TOP}')
+
+        # ストーリ高さはレイヤ関連付けの「後」に設定する。先に設定するとレイヤ作成中の
+        # AssociateLayerWithStory / AddStoryLevel が内部状態を書き換える過程でリセット
+        # されるケースがあり、結果としてストーリも紐づくデザインレイヤも高さ 0 になる。
+        vs.SetStoryElevation(story_h, elevation)
 
         count += 1
 

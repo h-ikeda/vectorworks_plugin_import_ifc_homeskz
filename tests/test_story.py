@@ -174,6 +174,26 @@ class TestImportStories:
         assert ('HANDLE_1-横架材天端', -48.0, 0.0) in elev_overwrite_calls
         assert ('HANDLE_屋根-軒高', 0.0, 0.0) in elev_overwrite_calls
 
+        # SetStoryElevation はそのストーリのレイヤ関連付け後に呼ばれること
+        # (バインディング過程でストーリ高さが 0 にリセットされるのを回避する)
+        call_sequence = [c[0] for c in vs_mock.mock_calls if c[0]]
+        for story_handle, story_layer in [
+            ('HANDLE_1階', 'HANDLE_1-FL'),
+            ('HANDLE_2階', 'HANDLE_2-FL'),
+            ('HANDLE_屋根', 'HANDLE_屋根-軒高'),
+        ]:
+            associate_idx = next(
+                i for i, c in enumerate(vs_mock.mock_calls)
+                if c[0] == 'AssociateLayerWithStory' and c.args == (story_layer, story_handle)
+            )
+            set_elev_idx = next(
+                i for i, c in enumerate(vs_mock.mock_calls)
+                if c[0] == 'SetStoryElevation' and c.args[0] == story_handle
+            )
+            assert set_elev_idx > associate_idx, (
+                f'{story_handle} の SetStoryElevation は AssociateLayerWithStory より後に呼ばれるべき'
+            )
+
     def test_empty_ifc_returns_zero(self):
         vs_mock = _make_stateful_vs_mock()
         ifc = ifcopenshell.file()
