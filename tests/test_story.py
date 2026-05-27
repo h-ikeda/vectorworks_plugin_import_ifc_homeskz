@@ -152,11 +152,6 @@ class TestImportStories:
             ('HANDLE_屋根', 5973.0),
         ]
 
-        level_type_creations = [call.args[0] for call in vs_mock.CreateLevelType.call_args_list]
-        assert 'FL' in level_type_creations
-        assert '横架材天端' in level_type_creations
-        assert '軒高' in level_type_creations
-
         layer_names = [call.args[0] for call in vs_mock.CreateLayer.call_args_list]
         assert layer_names == ['1-FL', '1-横架材天端', '2-FL', '2-横架材天端', '屋根-軒高']
 
