@@ -93,10 +93,6 @@ def import_stories(ifc_file):
     if not stories:
         return 0
 
-    vs.CreateLevelType(LEVEL_FL)
-    vs.CreateLevelType(LEVEL_BEAM_TOP)
-    vs.CreateLevelType(LEVEL_EAVES)
-
     n = len(stories)
     count = 0
     for i, (elevation, beam_offset) in enumerate(stories):
