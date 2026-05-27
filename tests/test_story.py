@@ -149,7 +149,8 @@ class TestImportStories:
         story_names = [call.args[0] for call in vs_mock.CreateStory.call_args_list]
         assert story_names == ['1階', '2階', '屋根']
 
-        elev_calls = [(call.args[0], call.args[1]) for call in vs_mock.SetStoryElevation.call_args_list]
+        # 高さ系 API は document units を使う N 付き版を呼ぶ
+        elev_calls = [(call.args[0], call.args[1]) for call in vs_mock.SetStoryElevationN.call_args_list]
         assert elev_calls == [
             ('HANDLE_1階', 473.0),
             ('HANDLE_2階', 3273.0),
@@ -159,7 +160,7 @@ class TestImportStories:
         layer_names = [call.args[0] for call in vs_mock.CreateLayer.call_args_list]
         assert layer_names == ['1-FL', '1-横架材天端', '2-FL', '2-横架材天端', '屋根-軒高']
 
-        add_level_calls = [call.args for call in vs_mock.AddStoryLevel.call_args_list]
+        add_level_calls = [call.args for call in vs_mock.AddStoryLevelN.call_args_list]
         assert ('HANDLE_1階', 'FL', 0.0, '1-FL') in add_level_calls
         assert ('HANDLE_1階', '横架材天端', -48.0, '1-横架材天端') in add_level_calls
         assert ('HANDLE_2階', 'FL', 0.0, '2-FL') in add_level_calls
@@ -168,15 +169,14 @@ class TestImportStories:
         # 屋根に FL/横架材天端は作らない
         assert not any(c[0] == 'HANDLE_屋根' and c[1] in ('FL', '横架材天端') for c in add_level_calls)
 
-        # レイヤ高さの強制上書きが正しい値で行われる
-        elev_overwrite_calls = [call.args for call in vs_mock.SetLayerElevation.call_args_list]
+        # レイヤ高さの強制上書きが正しい値で行われる (N 付き版を使用)
+        elev_overwrite_calls = [call.args for call in vs_mock.SetLayerElevationN.call_args_list]
         assert ('HANDLE_1-FL', 0.0, 0.0) in elev_overwrite_calls
         assert ('HANDLE_1-横架材天端', -48.0, 0.0) in elev_overwrite_calls
         assert ('HANDLE_屋根-軒高', 0.0, 0.0) in elev_overwrite_calls
 
-        # SetStoryElevation はそのストーリのレイヤ関連付け後に呼ばれること
+        # SetStoryElevationN はそのストーリのレイヤ関連付け後に呼ばれること
         # (バインディング過程でストーリ高さが 0 にリセットされるのを回避する)
-        call_sequence = [c[0] for c in vs_mock.mock_calls if c[0]]
         for story_handle, story_layer in [
             ('HANDLE_1階', 'HANDLE_1-FL'),
             ('HANDLE_2階', 'HANDLE_2-FL'),
@@ -188,10 +188,10 @@ class TestImportStories:
             )
             set_elev_idx = next(
                 i for i, c in enumerate(vs_mock.mock_calls)
-                if c[0] == 'SetStoryElevation' and c.args[0] == story_handle
+                if c[0] == 'SetStoryElevationN' and c.args[0] == story_handle
             )
             assert set_elev_idx > associate_idx, (
-                f'{story_handle} の SetStoryElevation は AssociateLayerWithStory より後に呼ばれるべき'
+                f'{story_handle} の SetStoryElevationN は AssociateLayerWithStory より後に呼ばれるべき'
             )
 
     def test_empty_ifc_returns_zero(self):
@@ -220,5 +220,5 @@ class TestImportStories:
         assert count == 1
         story_names = [call.args[0] for call in vs_mock.CreateStory.call_args_list]
         assert story_names == ['屋根']
-        add_level_calls = [call.args for call in vs_mock.AddStoryLevel.call_args_list]
+        add_level_calls = [call.args for call in vs_mock.AddStoryLevelN.call_args_list]
         assert ('HANDLE_屋根', '軒高', 0.0, '屋根-軒高') in add_level_calls

@@ -73,6 +73,8 @@ def create_story_layer(story_handle, level_type, elevation, layer_name):
     """ストーリレベル付きのデザインレイヤを作成し、レイヤハンドルを返す。
 
     処理順序: レイヤ作成 → レベルタイプ設定 → ストーリ関連付け → ストーリレベル追加 → 高さ強制上書き。
+    高さ系 API は N 付き (document units) を使う。N 無し版は内部単位 (inch) で解釈されるため
+    mm 値を渡すと範囲外と判定されて結果が 0 になる。
     """
     layer_h = vs.GetObject(layer_name)
     if layer_h == vs.Handle(0):
@@ -82,8 +84,8 @@ def create_story_layer(story_handle, level_type, elevation, layer_name):
 
     vs.SetLayerLevelType(layer_h, level_type)
     vs.AssociateLayerWithStory(layer_h, story_handle)
-    vs.AddStoryLevel(story_handle, level_type, elevation, layer_name)
-    vs.SetLayerElevation(layer_h, elevation, 0.0)
+    vs.AddStoryLevelN(story_handle, level_type, elevation, layer_name)
+    vs.SetLayerElevationN(layer_h, elevation, 0.0)
     return layer_h
 
 
@@ -122,7 +124,7 @@ def import_stories(ifc_file):
         # ストーリ高さはレイヤ関連付けの「後」に設定する。先に設定するとレイヤ作成中の
         # AssociateLayerWithStory / AddStoryLevel が内部状態を書き換える過程でリセット
         # されるケースがあり、結果としてストーリも紐づくデザインレイヤも高さ 0 になる。
-        vs.SetStoryElevation(story_h, elevation)
+        vs.SetStoryElevationN(story_h, elevation)
 
         count += 1
 
