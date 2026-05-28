@@ -68,11 +68,6 @@ def story_name_for(index, is_top):
     return STORY_ROOF if is_top else f'{index + 1}階'
 
 
-def layer_prefix_for(index, is_top):
-    """デザインレイヤ名の接頭辞を返す。"""
-    return STORY_ROOF if is_top else str(index + 1)
-
-
 def story_suffix_for(index, is_top):
     """CreateStory の suffix (前/後 記号) を返す。
 
@@ -82,30 +77,41 @@ def story_suffix_for(index, is_top):
     return 'R' if is_top else str(index + 1)
 
 
-def create_story_level_via_template(story_handle, level_type, elevation, layer_name):
+def layer_prefix_for(index, is_top):
+    """デザインレイヤ名の接頭辞を返す (ストーリ suffix と同じ "1"/"2"/"R")。"""
+    return story_suffix_for(index, is_top)
+
+
+def create_story_level_via_template(story_handle, level_type, elevation, desired_layer_name):
     """Story Level Template 経由でストーリレベルとそれに紐づくレイヤを作成し、診断文字列を返す。
 
-    VW 2026 では AddStoryLevelN + AssociateLayerWithStory の組み合わせでは
-    レイヤ→ストーリレベルの紐付けが UI 上 <なし> になる現象がある。代わりに
-    CreateLevelTemplateN + AddLevelFromTemplate を使うと、ドキュメント上明示的に
-    「a new layer will be created and associated with the new Story Level」と
-    保証されている。
+    VW 2026 では AddStoryLevelN + AssociateLayerWithStory ではレイヤ→レベルの紐付けが
+    UI 上 <なし> になるため、ドキュメントで明示的にバインドが保証されている
+    CreateLevelTemplateN + AddLevelFromTemplate を使う。
+
+    なお AddLevelFromTemplate は CreateStory の suffix を末尾に付加した名前で
+    レイヤを作る (例: "1-FL-1")。意図した名前 ("1-FL") にするため、
+    GetLayerForStory でハンドルを取り直して SetName でリネームする。
     """
-    # CreateLevelTemplateN(layerName, scaleFactor, levelType, elevation, wallHeight)
-    # wallHeight は当アプリでは未使用なので適当な値 (2400mm 想定)
-    result = vs.CreateLevelTemplateN(layer_name, 1.0, level_type, elevation, 2400.0)
+    result = vs.CreateLevelTemplateN(desired_layer_name, 1.0, level_type, elevation, 2400.0)
     if isinstance(result, tuple):
         ok, template_idx = result
     else:
         ok, template_idx = bool(result), -1
 
     add_result = False
+    renamed = False
     if ok and template_idx is not None and template_idx >= 0:
         add_result = vs.AddLevelFromTemplate(story_handle, template_idx)
+        if add_result:
+            layer_h = vs.GetLayerForStory(story_handle, level_type)
+            if layer_h != vs.Handle(0):
+                vs.SetName(layer_h, desired_layer_name)
+                renamed = True
 
     return (
-        f'{layer_name}: CreateLevelTemplateN={ok}(idx={template_idx}), '
-        f'AddLevelFromTemplate={add_result}'
+        f'{desired_layer_name}: CreateLevelTemplateN={ok}(idx={template_idx}), '
+        f'AddLevelFromTemplate={add_result}, renamed={renamed}'
     )
 
 

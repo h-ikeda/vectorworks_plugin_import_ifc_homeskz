@@ -38,6 +38,8 @@ def _make_vs_mock():
     vs_mock.CreateStory.side_effect = create_story
     vs_mock.CreateLayer.side_effect = create_layer
     vs_mock.CreateLevelTemplateN.side_effect = create_level_template
+    vs_mock.AddLevelFromTemplate.return_value = True
+    vs_mock.GetLayerForStory.return_value = 'HANDLE_template_layer'
     vs_mock.LNewObj.return_value = None
     vs_mock.CreateCustomObjectPath.return_value = None
     vs_mock.GetStoryElevationN.return_value = 0.0
@@ -96,12 +98,12 @@ class TestRun:
             # 通り芯描画用「共通」レイヤは直接 CreateLayer で作る
             created_layers = [c.args[0] for c in vs_mock.CreateLayer.call_args_list]
             assert '共通' in created_layers
-            # ストーリレイヤは CreateLevelTemplateN 経由 (1-FL, 屋根-軒高 等)
+            # ストーリレイヤは CreateLevelTemplateN 経由 (1-FL, R-軒高 等)
             template_layer_names = [
                 c.args[0] for c in vs_mock.CreateLevelTemplateN.call_args_list
             ]
             assert '1-FL' in template_layer_names
-            assert '屋根-軒高' in template_layer_names
+            assert 'R-軒高' in template_layer_names
         finally:
             os.unlink(ifc_path)
 

@@ -146,6 +146,8 @@ def _make_stateful_vs_mock():
     vs_mock.CreateStory.side_effect = create_story
     vs_mock.CreateLayer.side_effect = create_layer
     vs_mock.CreateLevelTemplateN.side_effect = create_level_template
+    vs_mock.AddLevelFromTemplate.return_value = True
+    vs_mock.GetLayerForStory.return_value = 'HANDLE_template_layer'
     vs_mock.GetStoryElevationN.return_value = 0.0
     vs_mock.GetLayerElevationN.return_value = (0.0, 0.0)
     return vs_mock
@@ -191,11 +193,12 @@ class TestImportStories:
         # UI で <なし> になる現象を回避するため)
         template_calls = [call.args for call in vs_mock.CreateLevelTemplateN.call_args_list]
         # (layerName, scaleFactor, levelType, elevation, wallHeight)
+        # レイヤ名接頭辞はストーリ suffix と一致させる ("1"/"2"/"R")
         assert ('1-FL', 1.0, 'FL', 0.0, 2400.0) in template_calls
         assert ('1-横架材天端', 1.0, '横架材天端', -48.0, 2400.0) in template_calls
         assert ('2-FL', 1.0, 'FL', 0.0, 2400.0) in template_calls
         assert ('2-横架材天端', 1.0, '横架材天端', -36.0, 2400.0) in template_calls
-        assert ('屋根-軒高', 1.0, '軒高', 0.0, 2400.0) in template_calls
+        assert ('R-軒高', 1.0, '軒高', 0.0, 2400.0) in template_calls
 
         # AddLevelFromTemplate がストーリ毎に呼ばれること
         add_calls = [call.args for call in vs_mock.AddLevelFromTemplate.call_args_list]
@@ -208,6 +211,15 @@ class TestImportStories:
         assert story_call_counts['HANDLE_1階'] == 2
         assert story_call_counts['HANDLE_2階'] == 2
         assert story_call_counts['HANDLE_屋根'] == 1
+
+        # AddLevelFromTemplate 後にレイヤをリネーム ("1-FL-1" → "1-FL")
+        rename_calls = [call.args for call in vs_mock.SetName.call_args_list]
+        renamed_names = [name for _, name in rename_calls]
+        assert '1-FL' in renamed_names
+        assert '1-横架材天端' in renamed_names
+        assert '2-FL' in renamed_names
+        assert '2-横架材天端' in renamed_names
+        assert 'R-軒高' in renamed_names
 
     def test_empty_ifc_returns_zero(self):
         vs_mock = _make_stateful_vs_mock()
@@ -238,6 +250,6 @@ class TestImportStories:
         story_names = [call.args[0] for call in vs_mock.CreateStory.call_args_list]
         assert story_names == ['屋根']
         template_calls = [call.args for call in vs_mock.CreateLevelTemplateN.call_args_list]
-        assert ('屋根-軒高', 1.0, '軒高', 0.0, 2400.0) in template_calls
+        assert ('R-軒高', 1.0, '軒高', 0.0, 2400.0) in template_calls
         # 屋根 (単一階扱い) の場合 FL/横架材天端 は作らない
         assert not any(c[2] in ('FL', '横架材天端') for c in template_calls)
