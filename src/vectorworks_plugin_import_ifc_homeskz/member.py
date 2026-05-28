@@ -9,7 +9,7 @@ import math
 import vs
 
 from .grid import resolve_lines
-from .story import LEVEL_BEAM_TOP, layer_prefix_for
+from .story import LEVEL_BEAM_TOP, LEVEL_EAVES, layer_prefix_for
 
 PLUGIN_NAME = 'StructuralMember'
 
@@ -161,11 +161,11 @@ def import_members(ifc_file):
     count = 0
 
     for i, storey in enumerate(storeys):
-        if i == top_idx:
-            continue  # 最上階(屋根)には横架材天端レイヤがない
-
-        prefix = layer_prefix_for(i, False)
-        layer_name = f'{prefix}-{LAYER_SUFFIX}'
+        is_top = (i == top_idx)
+        prefix = layer_prefix_for(i, is_top)
+        # 最上階は横架材天端レイヤがなく軒高レイヤに描画する
+        layer_suffix = LEVEL_EAVES if is_top else LAYER_SUFFIX
+        layer_name = f'{prefix}-{layer_suffix}'
 
         if vs.GetObject(layer_name) == vs.Handle(0):
             continue

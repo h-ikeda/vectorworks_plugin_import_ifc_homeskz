@@ -368,8 +368,8 @@ class TestImportMembers:
 
         assert count == 2
 
-    def test_skips_top_story(self):
-        """最上階のみのモデルでは横架材天端レイヤがないため 0 を返す。"""
+    def test_top_story_skipped_when_eaves_layer_missing(self):
+        """最上階でも軒高レイヤが未生成なら描画しない。"""
         ifc = ifcopenshell.file()
         storey = make_storey(ifc, 'RFL', 5973.0)
         make_beam(ifc, storey, 0.0, 0.0)
@@ -383,6 +383,23 @@ class TestImportMembers:
 
         assert count == 0
         vs_mock.Layer.assert_not_called()
+
+    def test_top_story_uses_eaves_layer(self):
+        """最上階 (RFL) のビームは R-軒高レイヤに配置される。"""
+        ifc = ifcopenshell.file()
+        storey = make_storey(ifc, 'RFL', 5973.0)
+        make_beam(ifc, storey, 0.0, 0.0)
+
+        vs_mock = _make_vs_mock(existing_layers={'R-軒高'})
+
+        with patch.dict('sys.modules', {'vs': vs_mock}):
+            import vectorworks_plugin_import_ifc_homeskz.member as member_module
+            importlib.reload(member_module)
+            count = member_module.import_members(ifc)
+
+        assert count == 1
+        layer_calls = [c.args[0] for c in vs_mock.Layer.call_args_list]
+        assert 'R-軒高' in layer_calls
 
     def test_switches_to_correct_layer(self):
         """各ストーリの横架材天端レイヤに切り替えて描画することを確認する。"""
