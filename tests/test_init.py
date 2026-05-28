@@ -27,9 +27,17 @@ def _make_vs_mock():
         created.add(name)
         return 'HANDLE_' + name
 
+    template_counter = [0]
+
+    def create_level_template(layer_name, scale, level_type, elev, wall_h):
+        idx = template_counter[0]
+        template_counter[0] += 1
+        return (True, idx)
+
     vs_mock.GetObject.side_effect = get_obj
     vs_mock.CreateStory.side_effect = create_story
     vs_mock.CreateLayer.side_effect = create_layer
+    vs_mock.CreateLevelTemplateN.side_effect = create_level_template
     vs_mock.LNewObj.return_value = None
     vs_mock.CreateCustomObjectPath.return_value = None
     vs_mock.GetStoryElevationN.return_value = 0.0
@@ -85,11 +93,15 @@ class TestRun:
             completion = vs_mock.AlrtDialog.call_args[0][0]
             assert '1 本' in completion  # 通り芯 1 本
             assert '2 階' in completion  # 1階 + 屋根
-            # 通り芯描画用「共通」レイヤと、ストーリレイヤが作られる
+            # 通り芯描画用「共通」レイヤは直接 CreateLayer で作る
             created_layers = [c.args[0] for c in vs_mock.CreateLayer.call_args_list]
             assert '共通' in created_layers
-            assert '1-FL' in created_layers
-            assert '屋根-軒高' in created_layers
+            # ストーリレイヤは CreateLevelTemplateN 経由 (1-FL, 屋根-軒高 等)
+            template_layer_names = [
+                c.args[0] for c in vs_mock.CreateLevelTemplateN.call_args_list
+            ]
+            assert '1-FL' in template_layer_names
+            assert '屋根-軒高' in template_layer_names
         finally:
             os.unlink(ifc_path)
 

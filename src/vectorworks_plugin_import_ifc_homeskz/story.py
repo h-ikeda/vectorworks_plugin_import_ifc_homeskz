@@ -82,34 +82,30 @@ def story_suffix_for(index, is_top):
     return 'R' if is_top else str(index + 1)
 
 
-def create_story_layer(story_handle, level_type, elevation, layer_name):
-    """ストーリレベル付きのデザインレイヤを作成し、(layer_handle, 診断文字列) を返す。
+def create_story_level_via_template(story_handle, level_type, elevation, layer_name):
+    """Story Level Template 経由でストーリレベルとそれに紐づくレイヤを作成し、診断文字列を返す。
 
-    呼び出し順序が重要:
-      1. CreateLayer / SetLayerLevelType でレイヤを準備
-      2. AddStoryLevelN で「指定 elevation」のストーリレベルを先に作る
-      3. AssociateLayerWithStory でレイヤ ↔ ストーリ本体を関連付け
-      4. SetLayerElevationN で念のため高さを上書き
-
-    順序を逆 (Associate 先, Add 後) にすると、Associate がレベルタイプを
-    elev=0 で暗黙的に作ってしまい、その後の AddStoryLevelN が
-    "matches levelType or elevation" 制約で失敗してレベルが elev=0 のまま残る。
+    VW 2026 では AddStoryLevelN + AssociateLayerWithStory の組み合わせでは
+    レイヤ→ストーリレベルの紐付けが UI 上 <なし> になる現象がある。代わりに
+    CreateLevelTemplateN + AddLevelFromTemplate を使うと、ドキュメント上明示的に
+    「a new layer will be created and associated with the new Story Level」と
+    保証されている。
     """
-    layer_h = vs.GetObject(layer_name)
-    if layer_h == vs.Handle(0):
-        layer_h = vs.CreateLayer(layer_name, 1)
-    if layer_h == vs.Handle(0):
-        return layer_h, f'CreateLayer({layer_name}) FAILED'
+    # CreateLevelTemplateN(layerName, scaleFactor, levelType, elevation, wallHeight)
+    # wallHeight は当アプリでは未使用なので適当な値 (2400mm 想定)
+    result = vs.CreateLevelTemplateN(layer_name, 1.0, level_type, elevation, 2400.0)
+    if isinstance(result, tuple):
+        ok, template_idx = result
+    else:
+        ok, template_idx = bool(result), -1
 
-    slt = vs.SetLayerLevelType(layer_h, level_type)
-    asl = vs.AddStoryLevelN(story_handle, level_type, elevation, layer_name)
-    alws = vs.AssociateLayerWithStory(layer_h, story_handle)
-    sle = vs.SetLayerElevationN(layer_h, elevation, 0.0)
-    actual_z_result = vs.GetLayerElevationN(layer_h)
-    actual_z = actual_z_result[0] if isinstance(actual_z_result, tuple) else actual_z_result
-    return layer_h, (
-        f'{layer_name}: SetLayerLevelType={slt}, AddStoryLevelN={asl}, '
-        f'AssociateLayerWithStory={alws}, SetLayerElevationN={sle}, z={actual_z}'
+    add_result = False
+    if ok and template_idx is not None and template_idx >= 0:
+        add_result = vs.AddLevelFromTemplate(story_handle, template_idx)
+
+    return (
+        f'{layer_name}: CreateLevelTemplateN={ok}(idx={template_idx}), '
+        f'AddLevelFromTemplate={add_result}'
     )
 
 
@@ -156,13 +152,15 @@ def import_stories(ifc_file):
 
         prefix = layer_prefix_for(i, is_top)
         if is_top:
-            _, ld = create_story_layer(story_h, LEVEL_EAVES, 0.0, f'{prefix}-{LEVEL_EAVES}')
-            diag_lines.append('  ' + ld)
+            level_specs = [(LEVEL_EAVES, 0.0, f'{prefix}-{LEVEL_EAVES}')]
         else:
-            _, ld1 = create_story_layer(story_h, LEVEL_FL, 0.0, f'{prefix}-{LEVEL_FL}')
-            diag_lines.append('  ' + ld1)
-            _, ld2 = create_story_layer(story_h, LEVEL_BEAM_TOP, beam_offset, f'{prefix}-{LEVEL_BEAM_TOP}')
-            diag_lines.append('  ' + ld2)
+            level_specs = [
+                (LEVEL_FL, 0.0, f'{prefix}-{LEVEL_FL}'),
+                (LEVEL_BEAM_TOP, beam_offset, f'{prefix}-{LEVEL_BEAM_TOP}'),
+            ]
+        for level_type, level_offset, layer_name in level_specs:
+            diag_lines.append('  ' + create_story_level_via_template(
+                story_h, level_type, level_offset, layer_name))
 
         count += 1
 
