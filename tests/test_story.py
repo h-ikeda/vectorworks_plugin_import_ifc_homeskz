@@ -96,14 +96,33 @@ class TestCollectStories:
 
         assert collect_stories(ifcopenshell.file()) == []
 
+    def test_excludes_non_fl_storeys(self):
+        """設計GL 等 "FL" で終わらないストーリは参照高なので除外する。"""
+        from vectorworks_plugin_import_ifc_homeskz.story import collect_stories
+
+        ifc = ifcopenshell.file()
+        make_storey(ifc, '設計GL', 0.0)
+        make_storey(ifc, '1FL', 473.0, [('IfcColumn', -48.0)])
+        make_storey(ifc, '2FL', 3273.0, [('IfcSlab', -36.0)])
+        make_storey(ifc, 'RFL', 5973.0)
+
+        result = collect_stories(ifc)
+
+        assert result == [
+            (473.0, -48.0),
+            (3273.0, -36.0),
+            (5973.0, None),
+        ]
+
 
 def _make_stateful_vs_mock():
-    """CreateStory/CreateLayer の作成有無を追跡するステートフルな vs モック。"""
+    """CreateStory/CreateLayer/CreateLevelTemplateN の作成有無を追跡するステートフルな vs モック。"""
     vs_mock = MagicMock()
     null_handle = object()
     vs_mock.Handle.return_value = null_handle
 
     created = set()
+    template_counter = [0]
 
     def get_obj(name):
         if name in created:
@@ -118,9 +137,19 @@ def _make_stateful_vs_mock():
         created.add(name)
         return 'HANDLE_' + name
 
+    def create_level_template(layer_name, scale, level_type, elev, wall_h):
+        idx = template_counter[0]
+        template_counter[0] += 1
+        return (True, idx)
+
     vs_mock.GetObject.side_effect = get_obj
     vs_mock.CreateStory.side_effect = create_story
     vs_mock.CreateLayer.side_effect = create_layer
+    vs_mock.CreateLevelTemplateN.side_effect = create_level_template
+    vs_mock.AddLevelFromTemplate.return_value = True
+    vs_mock.GetLayerForStory.return_value = 'HANDLE_template_layer'
+    vs_mock.GetStoryElevationN.return_value = 0.0
+    vs_mock.GetLayerElevationN.return_value = (0.0, 0.0)
     return vs_mock
 
 
@@ -142,33 +171,54 @@ class TestImportStories:
 
         assert count == 3
 
-        story_names = [call.args[0] for call in vs_mock.CreateStory.call_args_list]
-        assert story_names == ['1階', '2階', '屋根']
+        # レベルタイプが事前に登録されていること
+        level_type_names = [call.args[0] for call in vs_mock.CreateLayerLevelType.call_args_list]
+        assert level_type_names == ['FL', '横架材天端', '軒高']
 
-        elev_calls = [(call.args[0], call.args[1]) for call in vs_mock.SetStoryElevation.call_args_list]
+        story_calls = [call.args for call in vs_mock.CreateStory.call_args_list]
+        # 建築慣例: 一般階は階番号、最上階は "R"。空文字 suffix だと 2 回目以降失敗する
+        assert story_calls == [('1階', '1'), ('2階', '2'), ('屋根', 'R')]
+
+        # ストーリ高さは N 付き版で document units 指定
+        elev_calls = [(call.args[0], call.args[1]) for call in vs_mock.SetStoryElevationN.call_args_list]
         assert elev_calls == [
             ('HANDLE_1階', 473.0),
             ('HANDLE_2階', 3273.0),
             ('HANDLE_屋根', 5973.0),
         ]
 
-        layer_names = [call.args[0] for call in vs_mock.CreateLayer.call_args_list]
-        assert layer_names == ['1-FL', '1-横架材天端', '2-FL', '2-横架材天端', '屋根-軒高']
+        # ストーリレベル + レイヤは Story Level Template 経由で作る
+        # (AddStoryLevelN + AssociateLayerWithStory ではレイヤ→レベルの紐付けが
+        # UI で <なし> になる現象を回避するため)
+        template_calls = [call.args for call in vs_mock.CreateLevelTemplateN.call_args_list]
+        # (layerName, scaleFactor, levelType, elevation, wallHeight)
+        # レイヤ名接頭辞はストーリ suffix と一致させる ("1"/"2"/"R")
+        assert ('1-FL', 1.0, 'FL', 0.0, 2400.0) in template_calls
+        assert ('1-横架材天端', 1.0, '横架材天端', -48.0, 2400.0) in template_calls
+        assert ('2-FL', 1.0, 'FL', 0.0, 2400.0) in template_calls
+        assert ('2-横架材天端', 1.0, '横架材天端', -36.0, 2400.0) in template_calls
+        assert ('R-軒高', 1.0, '軒高', 0.0, 2400.0) in template_calls
 
-        add_level_calls = [call.args for call in vs_mock.AddStoryLevel.call_args_list]
-        assert ('HANDLE_1階', 'FL', 0.0, '1-FL') in add_level_calls
-        assert ('HANDLE_1階', '横架材天端', -48.0, '1-横架材天端') in add_level_calls
-        assert ('HANDLE_2階', 'FL', 0.0, '2-FL') in add_level_calls
-        assert ('HANDLE_2階', '横架材天端', -36.0, '2-横架材天端') in add_level_calls
-        assert ('HANDLE_屋根', '軒高', 0.0, '屋根-軒高') in add_level_calls
-        # 屋根に FL/横架材天端は作らない
-        assert not any(c[0] == 'HANDLE_屋根' and c[1] in ('FL', '横架材天端') for c in add_level_calls)
+        # AddLevelFromTemplate がストーリ毎に呼ばれること
+        add_calls = [call.args for call in vs_mock.AddLevelFromTemplate.call_args_list]
+        # 屋根は 1 つだけ (軒高)、それ以外は 2 つ (FL, 横架材天端) = 計 5 呼び出し
+        assert len(add_calls) == 5
+        # 各ストーリハンドルに対して正しい回数呼ばれる
+        story_call_counts = {h: 0 for h in ['HANDLE_1階', 'HANDLE_2階', 'HANDLE_屋根']}
+        for h, _ in add_calls:
+            story_call_counts[h] = story_call_counts.get(h, 0) + 1
+        assert story_call_counts['HANDLE_1階'] == 2
+        assert story_call_counts['HANDLE_2階'] == 2
+        assert story_call_counts['HANDLE_屋根'] == 1
 
-        # レイヤ高さの強制上書きが正しい値で行われる
-        elev_overwrite_calls = [call.args for call in vs_mock.SetLayerElevation.call_args_list]
-        assert ('HANDLE_1-FL', 0.0, 0.0) in elev_overwrite_calls
-        assert ('HANDLE_1-横架材天端', -48.0, 0.0) in elev_overwrite_calls
-        assert ('HANDLE_屋根-軒高', 0.0, 0.0) in elev_overwrite_calls
+        # AddLevelFromTemplate 後にレイヤをリネーム ("1-FL-1" → "1-FL")
+        rename_calls = [call.args for call in vs_mock.SetName.call_args_list]
+        renamed_names = [name for _, name in rename_calls]
+        assert '1-FL' in renamed_names
+        assert '1-横架材天端' in renamed_names
+        assert '2-FL' in renamed_names
+        assert '2-横架材天端' in renamed_names
+        assert 'R-軒高' in renamed_names
 
     def test_empty_ifc_returns_zero(self):
         vs_mock = _make_stateful_vs_mock()
@@ -196,5 +246,7 @@ class TestImportStories:
         assert count == 1
         story_names = [call.args[0] for call in vs_mock.CreateStory.call_args_list]
         assert story_names == ['屋根']
-        add_level_calls = [call.args for call in vs_mock.AddStoryLevel.call_args_list]
-        assert ('HANDLE_屋根', '軒高', 0.0, '屋根-軒高') in add_level_calls
+        template_calls = [call.args for call in vs_mock.CreateLevelTemplateN.call_args_list]
+        assert ('R-軒高', 1.0, '軒高', 0.0, 2400.0) in template_calls
+        # 屋根 (単一階扱い) の場合 FL/横架材天端 は作らない
+        assert not any(c[2] in ('FL', '横架材天端') for c in template_calls)
