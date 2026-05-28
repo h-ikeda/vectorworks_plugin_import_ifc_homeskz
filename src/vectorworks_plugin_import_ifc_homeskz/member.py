@@ -123,7 +123,11 @@ def _snap_endpoints(beams, tolerance=_JOIN_TOLERANCE):
 
     Returns
     -------
-    list of (x1, y1, x2, y2) tuples
+    list of dict
+        keys: x1, y1, x2, y2 (スナップ後座標),
+              start_join_offset, end_join_offset
+        join_offset はその端点がスナップされた相手部材のハーフ幅 (mm)。
+        スナップされなかった端点では None。
     """
     # (origin_x, origin_y, dir_x, dir_y, half_width, span_length) のリスト
     segs = [
@@ -137,10 +141,15 @@ def _snap_endpoints(beams, tolerance=_JOIN_TOLERANCE):
 
         extend_forward=True  → 終端 (x2,y2) を前方 (+adx,+ady) へ延伸
         extend_forward=False → 始端 (x1,y1) を後方 (-adx,-ady) へ延伸
+
+        Returns
+        -------
+        (new_x, new_y, winner_half_width)
+            スナップしなかった場合は winner_half_width=None
         """
         ext_x = adx if extend_forward else -adx
         ext_y = ady if extend_forward else -ady
-        best_t, snapped = float('inf'), None
+        best_t, snapped, winner_hw = float('inf'), None, None
 
         for ox, oy, odx, ody, ohw, other_len in others:
             # 直交チェック (dot ≈ 0)
@@ -162,26 +171,39 @@ def _snap_endpoints(beams, tolerance=_JOIN_TOLERANCE):
             if t < best_t:
                 best_t = t
                 snapped = (px + t * ext_x, py + t * ext_y)
+                winner_hw = ohw
 
-        return snapped if snapped is not None else (px, py)
+        if snapped is None:
+            return px, py, None
+        return snapped[0], snapped[1], winner_hw
 
     results = []
     for i, b in enumerate(beams):
         others = segs[:i] + segs[i + 1:]
-        nx1, ny1 = try_snap(b['x1'], b['y1'], b['dx'], b['dy'], False, others)
-        nx2, ny2 = try_snap(b['x2'], b['y2'], b['dx'], b['dy'], True, others)
-        results.append((nx1, ny1, nx2, ny2))
+        nx1, ny1, start_hw = try_snap(b['x1'], b['y1'], b['dx'], b['dy'], False, others)
+        nx2, ny2, end_hw = try_snap(b['x2'], b['y2'], b['dx'], b['dy'], True, others)
+        results.append({
+            'x1': nx1, 'y1': ny1, 'x2': nx2, 'y2': ny2,
+            'start_join_offset': start_hw,
+            'end_join_offset': end_hw,
+        })
 
     return results
 
 
-def _draw_member(x1, y1, x2, y2, width, height, member_id, layer_elevation):
+def _draw_member(x1, y1, x2, y2, width, height, member_id, layer_elevation,
+                 start_join_offset=None, end_join_offset=None):
     """構造材ツールで 1 本の部材を描画する。
 
     パスはローカル原点 (0,0,0) から方向ベクトルで定義し、
     CreateCustomObjectPath 後に Move3D で絶対位置へ移動する。
     これは VW 構造材ツールの期待する配置パターンと一致する。
     プラグインが利用できない場合は通常の直線にフォールバックする。
+
+    start_join_offset, end_join_offset が指定された場合（負け端点で勝ち部材の
+    中心線へスナップした場合）、その端点を「結合」状態にする:
+    Condition='0' + Offset='-<勝ち部材のハーフ幅>' を設定する。
+    これにより VW が部材を自動結合した状態で表示する。
     """
     # パスをローカル座標で作成 (始点=原点、終点=方向×長さ)
     path_h = vs.CreateNurbsCurve(0, 0, 0, False, 1)
@@ -209,8 +231,18 @@ def _draw_member(x1, y1, x2, y2, width, height, member_id, layer_elevation):
         vs.SetRField(obj, PLUGIN_NAME, 'MemberType', '2')
         vs.SetRField(obj, PLUGIN_NAME, 'StructuralUse', '1')
         vs.SetRField(obj, PLUGIN_NAME, 'AxisAlign', '1')
-        vs.SetRField(obj, PLUGIN_NAME, 'EndCondition', '3')
-        vs.SetRField(obj, PLUGIN_NAME, 'StartCondition', '3')
+        if start_join_offset is not None:
+            vs.SetRField(obj, PLUGIN_NAME, 'StartCondition', '0')
+            vs.SetRField(obj, PLUGIN_NAME, 'StartOffset', f'{-start_join_offset}')
+        else:
+            vs.SetRField(obj, PLUGIN_NAME, 'StartCondition', '3')
+            vs.SetRField(obj, PLUGIN_NAME, 'StartOffset', '0')
+        if end_join_offset is not None:
+            vs.SetRField(obj, PLUGIN_NAME, 'EndCondition', '0')
+            vs.SetRField(obj, PLUGIN_NAME, 'EndOffset', f'{-end_join_offset}')
+        else:
+            vs.SetRField(obj, PLUGIN_NAME, 'EndCondition', '3')
+            vs.SetRField(obj, PLUGIN_NAME, 'EndOffset', '0')
         vs.SetRField(obj, PLUGIN_NAME, 'ProfileSeries', 'AISC (Inch)')
         vs.ResetObject(obj)
     else:
@@ -285,10 +317,12 @@ def import_members(ifc_file):
         snapped = _snap_endpoints(raw_beams)
 
         # 3rd pass: 描画
-        for beam, (nx1, ny1, nx2, ny2) in zip(raw_beams, snapped):
-            _draw_member(nx1, ny1, nx2, ny2,
+        for beam, snap in zip(raw_beams, snapped):
+            _draw_member(snap['x1'], snap['y1'], snap['x2'], snap['y2'],
                          beam['width'], beam['height'],
-                         beam['member_id'], layer_elevation)
+                         beam['member_id'], layer_elevation,
+                         start_join_offset=snap['start_join_offset'],
+                         end_join_offset=snap['end_join_offset'])
             count += 1
 
     return count

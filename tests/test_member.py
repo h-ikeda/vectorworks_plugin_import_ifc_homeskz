@@ -469,6 +469,41 @@ class TestImportMembers:
             for x, y, z in move3d_calls
         )
 
+    def test_sets_join_fields_for_snapped_loser_beam(self):
+        """負け端点を中心線にスナップしたビームに結合用フィールドが設定されること。
+
+        勝ち部材 (vertical, hw=52.5) と負け部材 (horizontal, start offset by hw)
+        の交差で、負け部材の StartCondition='0' / StartOffset='-52.5' が
+        設定されることを確認する。
+        """
+        ifc = ifcopenshell.file()
+        s1 = make_storey(ifc, '1FL', 473.0)
+        make_storey(ifc, 'RFL', 5973.0)
+        hw = 52.5
+        # 勝ち: vertical, x=0
+        make_beam(ifc, s1, 0.0, -500.0, dx=0.0, dy=1.0, width=105.0, height=105.0, length=1000.0)
+        # 負け: horizontal, 始端 x=hw (勝ちの面に接した位置)
+        make_beam(ifc, s1, hw, 0.0, dx=1.0, dy=0.0, width=105.0, height=105.0, length=500.0)
+
+        vs_mock = _make_vs_mock(existing_layers={'1-横架材天端'})
+
+        with patch.dict('sys.modules', {'vs': vs_mock}):
+            import vectorworks_plugin_import_ifc_homeskz.member as member_module
+            importlib.reload(member_module)
+            member_module.import_members(ifc)
+
+        set_rfield_calls = [c.args for c in vs_mock.SetRField.call_args_list]
+        # 負け部材に StartCondition='0' と StartOffset='-52.5' が設定されているはず
+        start_cond_values = [v for h, plugin, name, v in set_rfield_calls
+                             if name == 'StartCondition']
+        start_offset_values = [v for h, plugin, name, v in set_rfield_calls
+                               if name == 'StartOffset']
+        # 勝ち部材は両端とも '3'/'0'、負け部材は始端 '0'/'-52.5'
+        assert '0' in start_cond_values
+        assert any(v == '-52.5' or v == '-52.5' for v in start_offset_values)
+        # 勝ち部材の両端は '3' のまま
+        assert start_cond_values.count('3') >= 1
+
     def test_sets_member_id_record_field(self):
         """構造材 ID が SetRField で設定されることを確認する。"""
         ifc = ifcopenshell.file()
@@ -552,8 +587,13 @@ class TestSnapEndpoints:
         from vectorworks_plugin_import_ifc_homeskz.member import _snap_endpoints
         beams = [self._beam(0.0, 0.0, 1000.0, 0.0)]
         result = _snap_endpoints(beams)
-        assert result == [(pytest.approx(0.0), pytest.approx(0.0),
-                           pytest.approx(1000.0), pytest.approx(0.0))]
+        assert len(result) == 1
+        assert result[0]['x1'] == pytest.approx(0.0)
+        assert result[0]['y1'] == pytest.approx(0.0)
+        assert result[0]['x2'] == pytest.approx(1000.0)
+        assert result[0]['y2'] == pytest.approx(0.0)
+        assert result[0]['start_join_offset'] is None
+        assert result[0]['end_join_offset'] is None
 
     def test_parallel_beams_unchanged(self):
         """平行部材は直交しないのでスナップしない。"""
@@ -563,10 +603,9 @@ class TestSnapEndpoints:
             self._beam(0.0, 500.0, 1000.0, 500.0),
         ]
         result = _snap_endpoints(beams)
-        assert result[0] == (pytest.approx(0.0), pytest.approx(0.0),
-                              pytest.approx(1000.0), pytest.approx(0.0))
-        assert result[1] == (pytest.approx(0.0), pytest.approx(500.0),
-                              pytest.approx(1000.0), pytest.approx(500.0))
+        for r in result:
+            assert r['start_join_offset'] is None
+            assert r['end_join_offset'] is None
 
     def test_loser_start_snaps_to_winner_centerline(self):
         """負け部材の始端が勝ち部材の中心線まで延伸されること。
@@ -579,11 +618,13 @@ class TestSnapEndpoints:
         winner = self._beam(0.0, -500.0, 0.0, 500.0, hw=hw)  # vertical
         loser  = self._beam(hw, 0.0, 500.0, 0.0, hw=hw)       # horizontal, start offset by hw
         result = _snap_endpoints([winner, loser])
-        _, (nx1, ny1, nx2, ny2) = result[0], result[1]
-        assert nx1 == pytest.approx(0.0)   # 中心線にスナップ
-        assert ny1 == pytest.approx(0.0)
-        assert nx2 == pytest.approx(500.0)  # 反対端は変化なし
-        assert ny2 == pytest.approx(0.0)
+        r = result[1]
+        assert r['x1'] == pytest.approx(0.0)   # 中心線にスナップ
+        assert r['y1'] == pytest.approx(0.0)
+        assert r['x2'] == pytest.approx(500.0)  # 反対端は変化なし
+        assert r['y2'] == pytest.approx(0.0)
+        assert r['start_join_offset'] == pytest.approx(hw)
+        assert r['end_join_offset'] is None
 
     def test_loser_end_snaps_to_winner_centerline(self):
         """負け部材の終端が勝ち部材の中心線まで延伸されること。"""
@@ -592,11 +633,13 @@ class TestSnapEndpoints:
         winner = self._beam(500.0, -500.0, 500.0, 500.0, hw=hw)  # vertical at x=500
         loser  = self._beam(0.0, 0.0, 500.0 - hw, 0.0, hw=hw)    # horizontal, end offset by -hw
         result = _snap_endpoints([winner, loser])
-        _, (nx1, ny1, nx2, ny2) = result[0], result[1]
-        assert nx1 == pytest.approx(0.0)
-        assert ny1 == pytest.approx(0.0)
-        assert nx2 == pytest.approx(500.0)  # 中心線にスナップ
-        assert ny2 == pytest.approx(0.0)
+        r = result[1]
+        assert r['x1'] == pytest.approx(0.0)
+        assert r['y1'] == pytest.approx(0.0)
+        assert r['x2'] == pytest.approx(500.0)  # 中心線にスナップ
+        assert r['y2'] == pytest.approx(0.0)
+        assert r['start_join_offset'] is None
+        assert r['end_join_offset'] == pytest.approx(hw)
 
     def test_winner_endpoints_unchanged(self):
         """勝ち部材（端点が中心線を超えていない）は変化しないこと。"""
@@ -605,11 +648,13 @@ class TestSnapEndpoints:
         winner = self._beam(0.0, -500.0, 0.0, 500.0, hw=hw)
         loser  = self._beam(hw, 0.0, 500.0, 0.0, hw=hw)
         result = _snap_endpoints([winner, loser])
-        wx1, wy1, wx2, wy2 = result[0]
-        assert wx1 == pytest.approx(0.0)
-        assert wy1 == pytest.approx(-500.0)
-        assert wx2 == pytest.approx(0.0)
-        assert wy2 == pytest.approx(500.0)
+        r = result[0]
+        assert r['x1'] == pytest.approx(0.0)
+        assert r['y1'] == pytest.approx(-500.0)
+        assert r['x2'] == pytest.approx(0.0)
+        assert r['y2'] == pytest.approx(500.0)
+        assert r['start_join_offset'] is None
+        assert r['end_join_offset'] is None
 
     def test_far_endpoint_not_snapped(self):
         """交差部材の面より大きく離れた端点はスナップしないこと。"""
@@ -619,8 +664,9 @@ class TestSnapEndpoints:
         # 端点が 200mm 離れており ohw+tolerance を超えるのでスナップしない
         far_beam = self._beam(200.0, 0.0, 1000.0, 0.0, hw=hw)
         result = _snap_endpoints([winner, far_beam])
-        _, (nx1, ny1, nx2, ny2) = result[0], result[1]
-        assert nx1 == pytest.approx(200.0)
+        r = result[1]
+        assert r['x1'] == pytest.approx(200.0)
+        assert r['start_join_offset'] is None
 
     def test_intersection_outside_winner_span_not_snapped(self):
         """交点が勝ち部材のスパン外の場合はスナップしないこと。"""
@@ -630,8 +676,9 @@ class TestSnapEndpoints:
         winner = self._beam(0.0, 100.0, 0.0, 200.0, hw=hw)
         loser  = self._beam(hw, 0.0, 500.0, 0.0, hw=hw)
         result = _snap_endpoints([winner, loser])
-        _, (nx1, ny1, nx2, ny2) = result[0], result[1]
-        assert nx1 == pytest.approx(hw)  # スナップされない
+        r = result[1]
+        assert r['x1'] == pytest.approx(hw)  # スナップされない
+        assert r['start_join_offset'] is None
 
     def test_real_ifc_sample_105_beam(self):
         """サンプル IFC の土台 105×105 に対して正しいスナップ量になること。"""
@@ -645,8 +692,10 @@ class TestSnapEndpoints:
                  'x2': 63700.0, 'y2': -66937.5,
                  'dx': 0.0, 'dy': -1.0, 'half_width': hw}
         result = _snap_endpoints([beam1, beam5])
-        (nx1, ny1, nx2, ny2), _ = result
-        assert nx1 == pytest.approx(63700.0)   # beam5 中心線へスナップ
-        assert ny1 == pytest.approx(-60970.0)
-        assert nx2 == pytest.approx(72592.5)   # beam2 不在なので終端は変化なし
-        assert ny2 == pytest.approx(-60970.0)
+        r = result[0]
+        assert r['x1'] == pytest.approx(63700.0)   # beam5 中心線へスナップ
+        assert r['y1'] == pytest.approx(-60970.0)
+        assert r['x2'] == pytest.approx(72592.5)   # beam2 不在なので終端は変化なし
+        assert r['y2'] == pytest.approx(-60970.0)
+        assert r['start_join_offset'] == pytest.approx(hw)
+        assert r['end_join_offset'] is None
