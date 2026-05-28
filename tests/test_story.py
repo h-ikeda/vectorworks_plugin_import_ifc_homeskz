@@ -167,8 +167,9 @@ class TestImportStories:
         level_type_names = [call.args[0] for call in vs_mock.CreateLayerLevelType.call_args_list]
         assert level_type_names == ['FL', '横架材天端', '軒高']
 
-        story_names = [call.args[0] for call in vs_mock.CreateStory.call_args_list]
-        assert story_names == ['1階', '2階', '屋根']
+        story_calls = [call.args for call in vs_mock.CreateStory.call_args_list]
+        # ストーリ名とユニークな非空 suffix を渡す (空文字 suffix だと 2 回目以降失敗するため)
+        assert story_calls == [('1階', '_1'), ('2階', '_2'), ('屋根', '_3')]
 
         # 高さ系 API は document units を使う N 付き版を呼ぶ
         elev_calls = [(call.args[0], call.args[1]) for call in vs_mock.SetStoryElevationN.call_args_list]
@@ -196,11 +197,14 @@ class TestImportStories:
         assert ('HANDLE_1-横架材天端', -48.0, 0.0) in elev_overwrite_calls
         assert ('HANDLE_屋根-軒高', 0.0, 0.0) in elev_overwrite_calls
 
-        # AssociateLayerWithStory は呼ばない (AddStoryLevelN が auto-associate するため)
-        vs_mock.AssociateLayerWithStory.assert_not_called()
+        # AssociateLayerWithStory はレイヤごとに呼ばれる (オーガナイザの「ストーリ」列を
+        # 埋めるために必要)
+        associate_calls = [call.args for call in vs_mock.AssociateLayerWithStory.call_args_list]
+        assert ('HANDLE_1-FL', 'HANDLE_1階') in associate_calls
+        assert ('HANDLE_1-横架材天端', 'HANDLE_1階') in associate_calls
+        assert ('HANDLE_屋根-軒高', 'HANDLE_屋根') in associate_calls
 
         # SetStoryElevationN は CreateStory 直後・各 AddStoryLevelN より前に呼ばれること
-        # (複数ストーリが既定高さ 0 で衝突して次の CreateStory が失敗するのを回避する)
         for story_handle in ['HANDLE_1階', 'HANDLE_2階', 'HANDLE_屋根']:
             add_idx = next(
                 i for i, c in enumerate(vs_mock.mock_calls)
