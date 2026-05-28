@@ -527,3 +527,126 @@ class TestImportMembers:
         assert count == 1
         # SetRField は呼ばれない (フォールバック時)
         vs_mock.SetRField.assert_not_called()
+
+
+# ---------------------------------------------------------------------------
+# _snap_endpoints
+# ---------------------------------------------------------------------------
+
+class TestSnapEndpoints:
+    """仕口スナップ (_snap_endpoints) のユニットテスト。"""
+
+    def _beam(self, x1, y1, x2, y2, hw=52.5):
+        import math
+        dx = x2 - x1
+        dy = y2 - y1
+        n = math.hypot(dx, dy)
+        return {'x1': x1, 'y1': y1, 'x2': x2, 'y2': y2,
+                'dx': dx / n, 'dy': dy / n, 'half_width': hw}
+
+    def test_no_beams(self):
+        from vectorworks_plugin_import_ifc_homeskz.member import _snap_endpoints
+        assert _snap_endpoints([]) == []
+
+    def test_single_beam_unchanged(self):
+        from vectorworks_plugin_import_ifc_homeskz.member import _snap_endpoints
+        beams = [self._beam(0.0, 0.0, 1000.0, 0.0)]
+        result = _snap_endpoints(beams)
+        assert result == [(pytest.approx(0.0), pytest.approx(0.0),
+                           pytest.approx(1000.0), pytest.approx(0.0))]
+
+    def test_parallel_beams_unchanged(self):
+        """平行部材は直交しないのでスナップしない。"""
+        from vectorworks_plugin_import_ifc_homeskz.member import _snap_endpoints
+        beams = [
+            self._beam(0.0, 0.0, 1000.0, 0.0),
+            self._beam(0.0, 500.0, 1000.0, 500.0),
+        ]
+        result = _snap_endpoints(beams)
+        assert result[0] == (pytest.approx(0.0), pytest.approx(0.0),
+                              pytest.approx(1000.0), pytest.approx(0.0))
+        assert result[1] == (pytest.approx(0.0), pytest.approx(500.0),
+                              pytest.approx(1000.0), pytest.approx(500.0))
+
+    def test_loser_start_snaps_to_winner_centerline(self):
+        """負け部材の始端が勝ち部材の中心線まで延伸されること。
+
+        勝ち部材 (vertical, x=0, y=-500〜500, hw=52.5)
+        負け部材 (horizontal) の始端 x=52.5 → スナップ後 x=0
+        """
+        from vectorworks_plugin_import_ifc_homeskz.member import _snap_endpoints
+        hw = 52.5
+        winner = self._beam(0.0, -500.0, 0.0, 500.0, hw=hw)  # vertical
+        loser  = self._beam(hw, 0.0, 500.0, 0.0, hw=hw)       # horizontal, start offset by hw
+        result = _snap_endpoints([winner, loser])
+        _, (nx1, ny1, nx2, ny2) = result[0], result[1]
+        assert nx1 == pytest.approx(0.0)   # 中心線にスナップ
+        assert ny1 == pytest.approx(0.0)
+        assert nx2 == pytest.approx(500.0)  # 反対端は変化なし
+        assert ny2 == pytest.approx(0.0)
+
+    def test_loser_end_snaps_to_winner_centerline(self):
+        """負け部材の終端が勝ち部材の中心線まで延伸されること。"""
+        from vectorworks_plugin_import_ifc_homeskz.member import _snap_endpoints
+        hw = 52.5
+        winner = self._beam(500.0, -500.0, 500.0, 500.0, hw=hw)  # vertical at x=500
+        loser  = self._beam(0.0, 0.0, 500.0 - hw, 0.0, hw=hw)    # horizontal, end offset by -hw
+        result = _snap_endpoints([winner, loser])
+        _, (nx1, ny1, nx2, ny2) = result[0], result[1]
+        assert nx1 == pytest.approx(0.0)
+        assert ny1 == pytest.approx(0.0)
+        assert nx2 == pytest.approx(500.0)  # 中心線にスナップ
+        assert ny2 == pytest.approx(0.0)
+
+    def test_winner_endpoints_unchanged(self):
+        """勝ち部材（端点が中心線を超えていない）は変化しないこと。"""
+        from vectorworks_plugin_import_ifc_homeskz.member import _snap_endpoints
+        hw = 52.5
+        winner = self._beam(0.0, -500.0, 0.0, 500.0, hw=hw)
+        loser  = self._beam(hw, 0.0, 500.0, 0.0, hw=hw)
+        result = _snap_endpoints([winner, loser])
+        wx1, wy1, wx2, wy2 = result[0]
+        assert wx1 == pytest.approx(0.0)
+        assert wy1 == pytest.approx(-500.0)
+        assert wx2 == pytest.approx(0.0)
+        assert wy2 == pytest.approx(500.0)
+
+    def test_far_endpoint_not_snapped(self):
+        """交差部材の面より大きく離れた端点はスナップしないこと。"""
+        from vectorworks_plugin_import_ifc_homeskz.member import _snap_endpoints
+        hw = 52.5
+        winner = self._beam(0.0, -500.0, 0.0, 500.0, hw=hw)
+        # 端点が 200mm 離れており ohw+tolerance を超えるのでスナップしない
+        far_beam = self._beam(200.0, 0.0, 1000.0, 0.0, hw=hw)
+        result = _snap_endpoints([winner, far_beam])
+        _, (nx1, ny1, nx2, ny2) = result[0], result[1]
+        assert nx1 == pytest.approx(200.0)
+
+    def test_intersection_outside_winner_span_not_snapped(self):
+        """交点が勝ち部材のスパン外の場合はスナップしないこと。"""
+        from vectorworks_plugin_import_ifc_homeskz.member import _snap_endpoints
+        hw = 52.5
+        # 縦部材: y=100〜200 のみ（y=0 を含まない）
+        winner = self._beam(0.0, 100.0, 0.0, 200.0, hw=hw)
+        loser  = self._beam(hw, 0.0, 500.0, 0.0, hw=hw)
+        result = _snap_endpoints([winner, loser])
+        _, (nx1, ny1, nx2, ny2) = result[0], result[1]
+        assert nx1 == pytest.approx(hw)  # スナップされない
+
+    def test_real_ifc_sample_105_beam(self):
+        """サンプル IFC の土台 105×105 に対して正しいスナップ量になること。"""
+        from vectorworks_plugin_import_ifc_homeskz.member import _snap_endpoints
+        hw = 52.5  # 105 / 2
+        # 土台:1 (horizontal) と 土台:5 (vertical) の実座標
+        beam1 = {'x1': 63752.5, 'y1': -60970.0,
+                 'x2': 72592.5, 'y2': -60970.0,
+                 'dx': 1.0, 'dy': 0.0, 'half_width': hw}
+        beam5 = {'x1': 63700.0, 'y1': -60917.5,
+                 'x2': 63700.0, 'y2': -66937.5,
+                 'dx': 0.0, 'dy': -1.0, 'half_width': hw}
+        result = _snap_endpoints([beam1, beam5])
+        (nx1, ny1, nx2, ny2), _ = result
+        assert nx1 == pytest.approx(63700.0)   # beam5 中心線へスナップ
+        assert ny1 == pytest.approx(-60970.0)
+        assert nx2 == pytest.approx(72592.5)   # beam2 不在なので終端は変化なし
+        assert ny2 == pytest.approx(-60970.0)
