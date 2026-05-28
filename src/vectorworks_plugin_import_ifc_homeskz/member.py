@@ -9,7 +9,7 @@ import math
 import vs
 
 from .grid import resolve_lines
-from .story import LEVEL_BEAM_TOP, LEVEL_EAVES, layer_prefix_for
+from .story import LEVEL_BEAM_TOP, LEVEL_EAVES, layer_prefix_for, resolve_beam_top_offset
 
 PLUGIN_NAME = 'StructuralMember'
 
@@ -102,14 +102,17 @@ def make_member_id(width, height, material):
     return f'{w}×{h} - {material}' if material else f'{w}×{h}'
 
 
-def _draw_member(x1, y1, x2, y2, width, height, member_id):
+def _draw_member(x1, y1, x2, y2, width, height, member_id, layer_elevation):
     """構造材ツールで 1 本の部材を描画する。
 
+    パスはローカル原点 (0,0,0) から方向ベクトルで定義し、
+    CreateCustomObjectPath 後に Move3D で絶対位置へ移動する。
+    これは VW 構造材ツールの期待する配置パターンと一致する。
     プラグインが利用できない場合は通常の直線にフォールバックする。
-    直交する部材との結合は VW プラグインが共有端点を検出して自動的に処理する。
     """
-    path_h = vs.CreateNurbsCurve(x1, y1, 0, False, 1)
-    vs.AddVertex3D(path_h, x2, y2, 0)
+    # パスをローカル座標で作成 (始点=原点、終点=方向×長さ)
+    path_h = vs.CreateNurbsCurve(0, 0, 0, False, 1)
+    vs.AddVertex3D(path_h, x2 - x1, y2 - y1, 0)
 
     w = int(round(width))
     h = int(round(height))
@@ -121,6 +124,9 @@ def _draw_member(x1, y1, x2, y2, width, height, member_id):
 
     obj = vs.CreateCustomObjectPath(PLUGIN_NAME, path_h, profile_h)
     if obj != vs.Handle(0):
+        # ローカル原点から実際の配置位置へ移動
+        vs.ResetOrientation3D()
+        vs.Move3D(x1, y1, layer_elevation)
         vs.SetRField(obj, PLUGIN_NAME, 'MemberID', member_id)
         vs.SetRField(obj, PLUGIN_NAME, 'ProfileShape', 'Rectangle')
         vs.SetRField(obj, PLUGIN_NAME, 'MajorBreadth', str(w))
@@ -171,6 +177,12 @@ def import_members(ifc_file):
             continue
         vs.Layer(layer_name)
 
+        storey_elevation = float(storey.Elevation or 0.0)
+        if is_top:
+            layer_elevation = storey_elevation
+        else:
+            layer_elevation = storey_elevation + resolve_beam_top_offset(storey)
+
         for rel in storey.ContainsElements:
             for element in rel.RelatedElements:
                 if not any(element.is_a(t) for t in _IFC_MEMBER_TYPES):
@@ -194,7 +206,7 @@ def import_members(ifc_file):
                 material = _get_material_name(element)
                 member_id = make_member_id(width, height, material)
 
-                _draw_member(x1, y1, x2, y2, width, height, member_id)
+                _draw_member(x1, y1, x2, y2, width, height, member_id, layer_elevation)
                 count += 1
 
     return count

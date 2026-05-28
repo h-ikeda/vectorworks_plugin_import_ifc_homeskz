@@ -429,12 +429,14 @@ class TestImportMembers:
         make_grid_axis(ifc, 'Y1', 0.0, 0.0, 0.0, 2000.0)
         storey = make_storey(ifc, '1FL', 473.0)
         make_storey(ifc, 'RFL', 5973.0)
-        # ビーム始端を (1000, 1000) に置けばオフセット後は (0, 0) になる
-        make_beam(ifc, storey, 1000.0, 1000.0, dx=1.0, dy=0.0, length=1000.0)
+        # ビーム始端 (1500, 1500): センタリング後 → (500, 500)
+        # 長さ 600, X 方向 → 終端ベクトル (600, 0)
+        make_beam(ifc, storey, 1500.0, 1500.0, dx=1.0, dy=0.0, length=600.0)
 
         vs_mock = _make_vs_mock(existing_layers={'1-横架材天端'})
         nurbs_calls = []
         vertex_calls = []
+        move3d_calls = []
 
         def capture_nurbs(x, y, z, closed, order):
             nurbs_calls.append((x, y))
@@ -443,20 +445,29 @@ class TestImportMembers:
         def capture_vertex(h, x, y, z):
             vertex_calls.append((x, y))
 
+        def capture_move3d(x, y, z):
+            move3d_calls.append((x, y, z))
+
         vs_mock.CreateNurbsCurve.side_effect = capture_nurbs
         vs_mock.AddVertex3D.side_effect = capture_vertex
+        vs_mock.Move3D.side_effect = capture_move3d
 
         with patch.dict('sys.modules', {'vs': vs_mock}):
             import vectorworks_plugin_import_ifc_homeskz.member as member_module
             importlib.reload(member_module)
             member_module.import_members(ifc)
 
-        # センタリング後: 始端 (1000-1000, 1000-1000) = (0, 0)
-        #                  終端 (0 + 1.0*1000, 0 + 0.0*1000) = (1000, 0)
+        # パスはローカル原点 (0, 0) から方向ベクトル (length, 0) へ
         assert (pytest.approx(0.0), pytest.approx(0.0)) in \
                [(pytest.approx(x), pytest.approx(y)) for x, y in nurbs_calls]
-        assert (pytest.approx(1000.0), pytest.approx(0.0)) in \
+        assert (pytest.approx(600.0), pytest.approx(0.0)) in \
                [(pytest.approx(x), pytest.approx(y)) for x, y in vertex_calls]
+        # Move3D でセンタリング後の始端 (1500-1000, 1500-1000) = (500, 500) へ移動
+        # layer_elevation = storey.Elevation + resolve_beam_top_offset = 473 + 0 = 473
+        assert any(
+            abs(x - 500.0) < 1e-6 and abs(y - 500.0) < 1e-6 and abs(z - 473.0) < 1e-6
+            for x, y, z in move3d_calls
+        )
 
     def test_sets_member_id_record_field(self):
         """構造材 ID が SetRField で設定されることを確認する。"""
