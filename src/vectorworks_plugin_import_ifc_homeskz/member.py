@@ -191,19 +191,13 @@ def _snap_endpoints(beams, tolerance=_JOIN_TOLERANCE):
     return results
 
 
-def _draw_member(x1, y1, x2, y2, width, height, member_id, layer_elevation,
-                 start_join_offset=None, end_join_offset=None):
+def _draw_member(x1, y1, x2, y2, width, height, member_id, layer_elevation):
     """構造材ツールで 1 本の部材を描画する。
 
     パスはローカル原点 (0,0,0) から方向ベクトルで定義し、
     CreateCustomObjectPath 後に Move3D で絶対位置へ移動する。
     これは VW 構造材ツールの期待する配置パターンと一致する。
     プラグインが利用できない場合は通常の直線にフォールバックする。
-
-    start_join_offset, end_join_offset が指定された場合（負け端点で勝ち部材の
-    中心線へスナップした場合）、その端点を「結合」状態にする:
-    Condition='0' + Offset='-<勝ち部材のハーフ幅>' を設定する。
-    これにより VW が部材を自動結合した状態で表示する。
     """
     # パスをローカル座標で作成 (始点=原点、終点=方向×長さ)
     path_h = vs.CreateNurbsCurve(0, 0, 0, False, 1)
@@ -231,18 +225,8 @@ def _draw_member(x1, y1, x2, y2, width, height, member_id, layer_elevation,
         vs.SetRField(obj, PLUGIN_NAME, 'MemberType', '2')
         vs.SetRField(obj, PLUGIN_NAME, 'StructuralUse', '1')
         vs.SetRField(obj, PLUGIN_NAME, 'AxisAlign', '1')
-        if start_join_offset is not None:
-            vs.SetRField(obj, PLUGIN_NAME, 'StartCondition', '0')
-            vs.SetRField(obj, PLUGIN_NAME, 'StartOffset', f'{-start_join_offset}')
-        else:
-            vs.SetRField(obj, PLUGIN_NAME, 'StartCondition', '3')
-            vs.SetRField(obj, PLUGIN_NAME, 'StartOffset', '0')
-        if end_join_offset is not None:
-            vs.SetRField(obj, PLUGIN_NAME, 'EndCondition', '0')
-            vs.SetRField(obj, PLUGIN_NAME, 'EndOffset', f'{-end_join_offset}')
-        else:
-            vs.SetRField(obj, PLUGIN_NAME, 'EndCondition', '3')
-            vs.SetRField(obj, PLUGIN_NAME, 'EndOffset', '0')
+        vs.SetRField(obj, PLUGIN_NAME, 'EndCondition', '3')
+        vs.SetRField(obj, PLUGIN_NAME, 'StartCondition', '3')
         vs.SetRField(obj, PLUGIN_NAME, 'ProfileSeries', 'AISC (Inch)')
         vs.ResetObject(obj)
     else:
@@ -320,9 +304,7 @@ def import_members(ifc_file):
         for beam, snap in zip(raw_beams, snapped):
             _draw_member(snap['x1'], snap['y1'], snap['x2'], snap['y2'],
                          beam['width'], beam['height'],
-                         beam['member_id'], layer_elevation,
-                         start_join_offset=snap['start_join_offset'],
-                         end_join_offset=snap['end_join_offset'])
+                         beam['member_id'], layer_elevation)
             count += 1
 
     return count

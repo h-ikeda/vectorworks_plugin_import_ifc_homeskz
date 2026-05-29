@@ -469,41 +469,6 @@ class TestImportMembers:
             for x, y, z in move3d_calls
         )
 
-    def test_sets_join_fields_for_snapped_loser_beam(self):
-        """負け端点を中心線にスナップしたビームに結合用フィールドが設定されること。
-
-        勝ち部材 (vertical, hw=52.5) と負け部材 (horizontal, start offset by hw)
-        の交差で、負け部材の StartCondition='0' / StartOffset='-52.5' が
-        設定されることを確認する。
-        """
-        ifc = ifcopenshell.file()
-        s1 = make_storey(ifc, '1FL', 473.0)
-        make_storey(ifc, 'RFL', 5973.0)
-        hw = 52.5
-        # 勝ち: vertical, x=0
-        make_beam(ifc, s1, 0.0, -500.0, dx=0.0, dy=1.0, width=105.0, height=105.0, length=1000.0)
-        # 負け: horizontal, 始端 x=hw (勝ちの面に接した位置)
-        make_beam(ifc, s1, hw, 0.0, dx=1.0, dy=0.0, width=105.0, height=105.0, length=500.0)
-
-        vs_mock = _make_vs_mock(existing_layers={'1-横架材天端'})
-
-        with patch.dict('sys.modules', {'vs': vs_mock}):
-            import vectorworks_plugin_import_ifc_homeskz.member as member_module
-            importlib.reload(member_module)
-            member_module.import_members(ifc)
-
-        set_rfield_calls = [c.args for c in vs_mock.SetRField.call_args_list]
-        # 負け部材に StartCondition='0' と StartOffset='-52.5' が設定されているはず
-        start_cond_values = [v for h, plugin, name, v in set_rfield_calls
-                             if name == 'StartCondition']
-        start_offset_values = [v for h, plugin, name, v in set_rfield_calls
-                               if name == 'StartOffset']
-        # 勝ち部材は両端とも '3'/'0'、負け部材は始端 '0'/'-52.5'
-        assert '0' in start_cond_values
-        assert any(v == '-52.5' or v == '-52.5' for v in start_offset_values)
-        # 勝ち部材の両端は '3' のまま
-        assert start_cond_values.count('3') >= 1
-
     def test_sets_member_id_record_field(self):
         """構造材 ID が SetRField で設定されることを確認する。"""
         ifc = ifcopenshell.file()
