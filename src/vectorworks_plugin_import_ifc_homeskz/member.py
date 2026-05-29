@@ -18,7 +18,7 @@ _IFC_MEMBER_TYPES = ('IfcBeam', 'IfcMember')
 
 
 def _get_placement_2d(element):
-    """IfcProduct のローカル配置から 2D 座標 (ox, oy, dx, dy) を返す。
+    """IfcProduct のローカル配置から座標 (ox, oy, oz, dx, dy) を返す。
 
     取得できない場合は None を返す。
     dx, dy は梁軸方向の単位ベクトル（Axis の XY 成分）。
@@ -35,7 +35,7 @@ def _get_placement_2d(element):
     if loc is None:
         return None
     coords = loc.Coordinates
-    ox, oy = float(coords[0]), float(coords[1])
+    ox, oy, oz = float(coords[0]), float(coords[1]), float(coords[2])
 
     axis = rel.Axis
     if axis is not None and len(axis.DirectionRatios) >= 2:
@@ -49,7 +49,7 @@ def _get_placement_2d(element):
     else:
         dx, dy = 1.0, 0.0
 
-    return ox, oy, dx, dy
+    return ox, oy, oz, dx, dy
 
 
 def _get_profile_dims(element):
@@ -147,13 +147,87 @@ def _draw_member(x1, y1, x2, y2, width, height, member_id, layer_elevation):
         vs.LNewObj()
 
 
+def _collect_all_beam_segments(ifc_file):
+    """IFC 内の全 IfcBeam / IfcMember の位置・方向・断面幅を収集して返す。
+
+    戻り値: list of dict with keys ox, oy, oz, ex, ey, ez, dx, dy, w
+    端点補正の参照データとして使用する。
+    """
+    segments = []
+    for element in ifc_file.by_type('IfcBeam'):
+        placement = getattr(element, 'ObjectPlacement', None)
+        if not placement or not placement.is_a('IfcLocalPlacement'):
+            continue
+        rel = placement.RelativePlacement
+        if not rel or not rel.is_a('IfcAxis2Placement3D'):
+            continue
+        loc = rel.Location
+        if loc is None:
+            continue
+        coords = loc.Coordinates
+        ox, oy, oz = float(coords[0]), float(coords[1]), float(coords[2])
+
+        axis = rel.Axis
+        if axis is not None and len(axis.DirectionRatios) >= 3:
+            dx, dy, dz = [float(v) for v in axis.DirectionRatios[:3]]
+        elif axis is not None and len(axis.DirectionRatios) >= 2:
+            dx, dy, dz = float(axis.DirectionRatios[0]), float(axis.DirectionRatios[1]), 0.0
+        else:
+            dx, dy, dz = 1.0, 0.0, 0.0
+
+        dims = _get_profile_dims(element)
+        if dims is None:
+            continue
+        w, _, length = dims
+        norm = math.sqrt(dx * dx + dy * dy + dz * dz)
+        if norm > 0:
+            dx, dy, dz = dx / norm, dy / norm, dz / norm
+        segments.append(dict(
+            ox=ox, oy=oy, oz=oz,
+            ex=ox + dx * length, ey=oy + dy * length, ez=oz + dz * length,
+            dx=dx, dy=dy, w=w,
+        ))
+    return segments
+
+
+def _endpoint_intrusion(px, py, pz, segments, skip_seg):
+    """端点 (px, py, pz) が他の梁線分の断面内に食い込む最大量 (mm) を返す。
+
+    直交（端点付近を除く）する梁の半幅より垂直距離が小さい場合に食い込みとみなす。
+    """
+    max_intrusion = 0.0
+    for seg in segments:
+        if seg is skip_seg:
+            continue
+        if abs(pz - seg['oz']) > 10:
+            continue
+        ax, ay = seg['ox'], seg['oy']
+        bx, by = seg['ex'], seg['ey']
+        sdx, sdy = bx - ax, by - ay
+        seg_len = math.hypot(sdx, sdy)
+        if seg_len < 1e-6:
+            continue
+        t = ((px - ax) * sdx + (py - ay) * sdy) / (seg_len * seg_len)
+        # t が 0.01〜0.99 の範囲にある場合のみ内部に射影されているとみなす
+        if t < 0.01 or t > 0.99:
+            continue
+        perp = abs((px - ax) * sdy - (py - ay) * sdx) / seg_len
+        intrusion = seg['w'] / 2.0 - perp
+        if intrusion > max_intrusion:
+            max_intrusion = intrusion
+    return max_intrusion
+
+
 def import_members(ifc_file):
     """IFC の横架材 (IfcBeam / IfcMember) を各階の横架材天端レイヤに描画し、配置数を返す。
 
     配置座標は通り芯と同じグリッド中心オフセットで補正する。
     最上階（屋根）には横架材天端レイヤが存在しないため対象外とする。
+    直交する梁との干渉を防ぐため、端点が他の梁断面内に入り込む場合は
+    食い込み量だけ自軸方向に後退させる。
     """
     _, center_x, center_y = resolve_lines(ifc_file)
+    all_segments = _collect_all_beam_segments(ifc_file)
 
     storeys = sorted(
         [s for s in ifc_file.by_type('IfcBuildingStorey')
@@ -195,13 +269,29 @@ def import_members(ifc_file):
                 if dims is None:
                     continue
 
-                ox, oy, dx, dy = placement
+                ox, oy, oz, dx, dy = placement
                 width, height, length = dims
 
-                x1 = ox - center_x
-                y1 = oy - center_y
-                x2 = x1 + dx * length
-                y2 = y1 + dy * length
+                # IFC 座標での始終点
+                ifc_x1, ifc_y1 = ox, oy
+                ifc_x2 = ifc_x1 + dx * length
+                ifc_y2 = ifc_y1 + dy * length
+
+                # 対応する _collect_all_beam_segments のエントリを特定
+                seg = _find_segment(all_segments, ifc_x1, ifc_y1, oz, dx, dy, length)
+
+                # 端点補正: 直交する梁への食い込み量だけ後退
+                s_in = _endpoint_intrusion(ifc_x1, ifc_y1, oz, all_segments, seg)
+                e_in = _endpoint_intrusion(ifc_x2, ifc_y2, oz, all_segments, seg)
+                ifc_x1 += s_in * dx
+                ifc_y1 += s_in * dy
+                ifc_x2 -= e_in * dx
+                ifc_y2 -= e_in * dy
+
+                x1 = ifc_x1 - center_x
+                y1 = ifc_y1 - center_y
+                x2 = ifc_x2 - center_x
+                y2 = ifc_y2 - center_y
 
                 material = _get_material_name(element)
                 member_id = make_member_id(width, height, material)
@@ -210,3 +300,18 @@ def import_members(ifc_file):
                 count += 1
 
     return count
+
+
+def _find_segment(segments, ox, oy, oz, dx, dy, length):
+    """_collect_all_beam_segments の結果から自分自身のエントリを返す。
+
+    端点比較で一致するものを探す。見つからない場合は None を返す。
+    """
+    ex = ox + dx * length
+    ey = oy + dy * length
+    for seg in segments:
+        if (abs(seg['ox'] - ox) < 1e-3 and abs(seg['oy'] - oy) < 1e-3
+                and abs(seg['oz'] - oz) < 1e-3
+                and abs(seg['ex'] - ex) < 1e-3 and abs(seg['ey'] - ey) < 1e-3):
+            return seg
+    return None
