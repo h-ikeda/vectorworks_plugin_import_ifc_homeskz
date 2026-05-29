@@ -119,7 +119,7 @@ class TestGetPlacement2D:
 
         result = _get_placement_2d(beam)
         assert result is not None
-        ox, oy, dx, dy = result
+        ox, oy, oz, dx, dy = result
         assert ox == pytest.approx(1000.0)
         assert oy == pytest.approx(2000.0)
 
@@ -132,7 +132,7 @@ class TestGetPlacement2D:
         lp = ifc.create_entity('IfcLocalPlacement', RelativePlacement=ap)
         beam = ifc.create_entity('IfcBeam', ObjectPlacement=lp)
 
-        ox, oy, dx, dy = _get_placement_2d(beam)
+        ox, oy, oz, dx, dy = _get_placement_2d(beam)
         assert dx == pytest.approx(1.0)
         assert dy == pytest.approx(0.0)
 
@@ -146,7 +146,7 @@ class TestGetPlacement2D:
         lp = ifc.create_entity('IfcLocalPlacement', RelativePlacement=ap)
         beam = ifc.create_entity('IfcBeam', ObjectPlacement=lp)
 
-        ox, oy, dx, dy = _get_placement_2d(beam)
+        ox, oy, oz, dx, dy = _get_placement_2d(beam)
         assert dx == pytest.approx(0.0)
         assert dy == pytest.approx(1.0)
 
@@ -162,7 +162,7 @@ class TestGetPlacement2D:
         lp = ifc.create_entity('IfcLocalPlacement', RelativePlacement=ap)
         beam = ifc.create_entity('IfcBeam', ObjectPlacement=lp)
 
-        ox, oy, dx, dy = _get_placement_2d(beam)
+        ox, oy, oz, dx, dy = _get_placement_2d(beam)
         assert math.hypot(dx, dy) == pytest.approx(1.0)
 
     def test_returns_none_when_no_placement(self):
@@ -527,3 +527,54 @@ class TestImportMembers:
         assert count == 1
         # SetRField は呼ばれない (フォールバック時)
         vs_mock.SetRField.assert_not_called()
+
+
+# ---------------------------------------------------------------------------
+# 端点補正テスト
+# ---------------------------------------------------------------------------
+
+class TestEndpointIntrusion:
+    def _make_seg(self, ox, oy, oz, ex, ey, w):
+        return dict(ox=ox, oy=oy, oz=oz, ex=ex, ey=ey, ez=oz, w=w)
+
+    def test_no_intrusion_when_endpoint_at_face(self):
+        from vectorworks_plugin_import_ifc_homeskz.member import _endpoint_intrusion
+        # 直交する幅 100mm の梁があり、端点がその面上にある（perp_dist == 50mm）
+        cross = self._make_seg(-50, -500, 0.0, -50, 500, 100)
+        result = _endpoint_intrusion(-50 + 50, 0.0, 0.0, [cross])
+        assert result == pytest.approx(0.0, abs=1e-6)
+
+    def test_detects_intrusion(self):
+        from vectorworks_plugin_import_ifc_homeskz.member import _endpoint_intrusion
+        # 直交する幅 105mm の梁に対して端点が中心線上（perp=0）にある場合
+        cross = self._make_seg(0, -500, 0.0, 0, 500, 105)
+        result = _endpoint_intrusion(0.0, 0.0, 0.0, [cross])
+        assert result == pytest.approx(52.5, abs=1e-6)
+
+    def test_partial_intrusion(self):
+        from vectorworks_plugin_import_ifc_homeskz.member import _endpoint_intrusion
+        # 幅 105mm 梁に対して 45mm 離れた端点（7.5mm 食い込み）
+        cross = self._make_seg(0, -500, 0.0, 0, 500, 105)
+        result = _endpoint_intrusion(45.0, 0.0, 0.0, [cross])
+        assert result == pytest.approx(7.5, abs=1e-6)
+
+    def test_skips_endpoint_region(self):
+        from vectorworks_plugin_import_ifc_homeskz.member import _endpoint_intrusion
+        # t < 0.01（端部付近）はスキップされる（自己セグメントの始終点に相当）
+        cross = self._make_seg(0, 0, 0.0, 0, 1000, 105)
+        result = _endpoint_intrusion(0.0, 5.0, 0.0, [cross])  # t=0.005
+        assert result == pytest.approx(0.0, abs=1e-6)
+
+    def test_skips_self_segment_via_t_filter(self):
+        from vectorworks_plugin_import_ifc_homeskz.member import _endpoint_intrusion
+        # 自己セグメントは t=0（始点）または t=1（終点）なので t フィルタで除外される
+        self_seg = self._make_seg(0, -500, 0.0, 0, 500, 105)
+        result = _endpoint_intrusion(0.0, -500.0, 0.0, [self_seg])  # 始点: t=0.0
+        assert result == pytest.approx(0.0, abs=1e-6)
+
+    def test_skips_different_z(self):
+        from vectorworks_plugin_import_ifc_homeskz.member import _endpoint_intrusion
+        # Z が 10mm 超離れた梁はスキップされる
+        cross = self._make_seg(0, -500, 100.0, 0, 500, 105)
+        result = _endpoint_intrusion(0.0, 0.0, 0.0, [cross])
+        assert result == pytest.approx(0.0, abs=1e-6)
