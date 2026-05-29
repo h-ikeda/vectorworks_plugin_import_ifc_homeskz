@@ -1,7 +1,7 @@
 """横架材天端レイヤに土台・梁・桁を描画するモジュール。
 
 IFC の IfcBeam / IfcMember を走査し、各階の横架材天端レイヤに
-VectorWorks 軸組ツール (CreateCustomObjectPath('軸組', ...)) で配置する。
+VectorWorks 軸組ツール (CreateCustomObjectPath('FramingMember', ...)) で配置する。
 部材名は断面寸法と材種から "{幅}×{背} - {材種}" の形式で自動生成する。
 """
 import math
@@ -11,7 +11,7 @@ import vs
 from .grid import resolve_lines
 from .story import LEVEL_BEAM_TOP, LEVEL_EAVES, layer_prefix_for, resolve_beam_top_offset
 
-PLUGIN_NAME = '軸組'
+PLUGIN_NAME = 'FramingMember'
 
 LAYER_SUFFIX = LEVEL_BEAM_TOP
 _IFC_MEMBER_TYPES = ('IfcBeam', 'IfcMember')
