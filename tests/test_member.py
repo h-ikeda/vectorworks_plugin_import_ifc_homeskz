@@ -534,8 +534,8 @@ class TestImportMembers:
 # ---------------------------------------------------------------------------
 
 class TestEndpointIntrusion:
-    def _make_seg(self, ox, oy, oz, ex, ey, w, element=None):
-        return dict(element=element, ox=ox, oy=oy, oz=oz, ex=ex, ey=ey, ez=oz, dx=0.0, dy=1.0, w=w)
+    def _make_seg(self, ox, oy, oz, ex, ey, w, element_id=None):
+        return dict(element_id=element_id, ox=ox, oy=oy, oz=oz, ex=ex, ey=ey, ez=oz, dx=0.0, dy=1.0, w=w)
 
     def test_no_intrusion_when_endpoint_at_face(self):
         from vectorworks_plugin_import_ifc_homeskz.member import _endpoint_intrusion
@@ -574,8 +574,7 @@ class TestEndpointIntrusion:
 
     def test_skips_self_element(self):
         from vectorworks_plugin_import_ifc_homeskz.member import _endpoint_intrusion
-        sentinel = object()
-        seg = self._make_seg(0, -500, 0.0, 0, 500, 105, element=sentinel)
-        # skip_element に自分自身のオブジェクトを渡すとスキップされる
-        result = _endpoint_intrusion(0.0, 0.0, 0.0, [seg], sentinel)
+        seg = self._make_seg(0, -500, 0.0, 0, 500, 105, element_id=42)
+        # skip_element_id に自分自身の id を渡すとスキップされる
+        result = _endpoint_intrusion(0.0, 0.0, 0.0, [seg], 42)
         assert result == pytest.approx(0.0, abs=1e-6)
