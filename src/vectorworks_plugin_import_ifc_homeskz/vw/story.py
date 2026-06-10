@@ -1,8 +1,16 @@
 """story 命令の実行。ストーリ・ストーリレベル・デザインレイヤを生成する。"""
+from __future__ import annotations
+
+from typing import Any
+
 import vs
 
+from ..document import StoryCommand
 
-def create_story_level_via_template(story_handle, level_type, elevation, desired_layer_name):
+
+def create_story_level_via_template(
+    story_handle: Any, level_type: str, elevation: float, desired_layer_name: str,
+) -> None:
     """Story Level Template 経由でストーリレベルとそれに紐づくレイヤを作成する。
 
     VW 2026 では AddStoryLevelN + AssociateLayerWithStory ではレイヤ→レベルの紐付けが
@@ -28,13 +36,13 @@ def create_story_level_via_template(story_handle, level_type, elevation, desired
         vs.SetName(layer_h, desired_layer_name)
 
 
-def execute_stories(commands):
+def execute_stories(commands: list[StoryCommand]) -> int:
     """story 命令のリストを実行し、作成階数を返す。"""
     if not commands:
         return 0
 
     # 命令セットに登場するレベルタイプを登場順に事前登録する
-    level_types = []
+    level_types: list[str] = []
     for command in commands:
         for level in command['levels']:
             if level['type'] not in level_types:

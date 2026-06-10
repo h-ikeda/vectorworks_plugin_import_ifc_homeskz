@@ -44,25 +44,77 @@
         ]
     }
 """
+from __future__ import annotations
+
 import json
+from typing import Any, TypedDict
 
 DOCUMENT_VERSION = 1
+
+
+class LevelCommand(TypedDict):
+    """story 命令内の 1 ストーリレベル。"""
+
+    type: str
+    offset: float
+    layer: str
+
+
+class StoryCommand(TypedDict):
+    """ストーリ・ストーリレベル・デザインレイヤを生成する命令。"""
+
+    name: str
+    suffix: str
+    elevation: float
+    levels: list[LevelCommand]
+
+
+# 'class' キーが Python の予約語のため functional 構文で定義する
+GridCommand = TypedDict('GridCommand', {
+    'label': str,
+    'layer': str,
+    'class': str,
+    'start': list[float],
+    'end': list[float],
+})
+"""通り芯 (GridAxis オブジェクト) を描画する命令。"""
+
+
+class MemberCommand(TypedDict):
+    """構造材 (StructuralMember オブジェクト) を描画する命令。"""
+
+    layer: str
+    member_id: str
+    start: list[float]
+    end: list[float]
+    width: float
+    height: float
+    elevation: float
+
+
+class Document(TypedDict):
+    """両フェーズを接続する命令セット全体。"""
+
+    version: int
+    stories: list[StoryCommand]
+    grids: list[GridCommand]
+    members: list[MemberCommand]
 
 
 class DocumentValidationError(ValueError):
     """命令セットがスキーマに適合しない場合に送出される。"""
 
 
-def _require(condition, message):
+def _require(condition: object, message: str) -> None:
     if not condition:
         raise DocumentValidationError(message)
 
 
-def _is_number(value):
+def _is_number(value: object) -> bool:
     return isinstance(value, (int, float)) and not isinstance(value, bool)
 
 
-def _is_point(value):
+def _is_point(value: object) -> bool:
     return (
         isinstance(value, (list, tuple))
         and len(value) == 2
@@ -70,7 +122,7 @@ def _is_point(value):
     )
 
 
-def _validate_level(index, level_index, level):
+def _validate_level(index: int, level_index: int, level: Any) -> None:
     where = f'stories[{index}].levels[{level_index}]'
     _require(isinstance(level, dict), f'{where} は dict である必要があります')
     _require(isinstance(level.get('type'), str) and level['type'],
@@ -80,7 +132,7 @@ def _validate_level(index, level_index, level):
              f'{where}.layer は非空文字列である必要があります')
 
 
-def _validate_story(index, command):
+def _validate_story(index: int, command: Any) -> None:
     where = f'stories[{index}]'
     _require(isinstance(command, dict), f'{where} は dict である必要があります')
     _require(isinstance(command.get('name'), str) and command['name'],
@@ -96,7 +148,7 @@ def _validate_story(index, command):
         _validate_level(index, j, level)
 
 
-def _validate_grid(index, command):
+def _validate_grid(index: int, command: Any) -> None:
     where = f'grids[{index}]'
     _require(isinstance(command, dict), f'{where} は dict である必要があります')
     _require(isinstance(command.get('label'), str),
@@ -111,7 +163,7 @@ def _validate_grid(index, command):
              f'{where}.end は [x, y] の数値ペアである必要があります')
 
 
-def _validate_member(index, command):
+def _validate_member(index: int, command: Any) -> None:
     where = f'members[{index}]'
     _require(isinstance(command, dict), f'{where} は dict である必要があります')
     _require(isinstance(command.get('layer'), str) and command['layer'],
@@ -127,7 +179,7 @@ def _validate_member(index, command):
                  f'{where}.{key} は数値である必要があります')
 
 
-def validate_document(document):
+def validate_document(document: Any) -> Document:
     """命令セットを検証し、不正な場合は DocumentValidationError を送出する。"""
     _require(isinstance(document, dict), '命令セットは dict である必要があります')
     _require(document.get('version') == DOCUMENT_VERSION,

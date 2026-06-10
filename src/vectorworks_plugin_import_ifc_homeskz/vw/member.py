@@ -1,10 +1,14 @@
 """member 命令の描画。VectorWorks 構造材ツールで部材を配置する。"""
+from __future__ import annotations
+
 import vs
+
+from ..document import MemberCommand
 
 PLUGIN_NAME = 'StructuralMember'
 
 
-def draw_member(command):
+def draw_member(command: MemberCommand) -> None:
     """member 命令 1 件を構造材ツールで描画する。
 
     パスはローカル原点 (0,0,0) から方向ベクトルで定義し、
@@ -52,7 +56,7 @@ def draw_member(command):
         vs.LNewObj()
 
 
-def execute_members(commands):
+def execute_members(commands: list[MemberCommand]) -> int:
     """member 命令のリストを描画し、配置数を返す。
 
     配置先レイヤが存在しない命令はスキップする（レイヤは story 命令が生成する。

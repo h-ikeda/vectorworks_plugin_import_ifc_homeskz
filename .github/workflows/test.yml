@@ -37,6 +37,9 @@ jobs:
           fi
           echo "vs.py downloaded successfully"
 
+      - name: Run type check (mypy)
+        run: mypy
+
       - name: Run tests with coverage
         run: pytest tests/ -v --cov=src/vectorworks_plugin_import_ifc_homeskz --cov-report=xml
 

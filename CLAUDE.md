@@ -50,6 +50,16 @@ pyproject.toml               # パッケージメタデータ
 
 `vs` を import してよいのは `vw` サブパッケージ内と `run()` 関数内（遅延 import）だけ。`ifc` サブパッケージや `document.py` に `vs` への依存を持ち込まないこと。テストもこの分離に従う: `tests/test_ifc_*.py`・`tests/test_document.py` は vs モック不要、`tests/test_vw_*.py` は手書きの命令セットを vs モックで実行して検証する。
 
+## コーディング規約: 型注釈
+
+すべての関数・メソッド（テストコード・モック用クロージャ含む）に引数と戻り値の型注釈を付ける。型検査は mypy で行い、CI で `mypy` を実行する（設定は `pyproject.toml` の `[tool.mypy]`、`disallow_untyped_defs` 有効）。
+
+- 各モジュール先頭に `from __future__ import annotations` を置く。Python 3.9 互換を保ちつつ `list[str]` / `X | None` 構文を使うため。
+- 命令セットの型は `document.py` の `TypedDict`（`Document` / `StoryCommand` / `GridCommand` / `MemberCommand` / `LevelCommand`）を使う。`GridCommand` は `class` キーが予約語のため functional 構文で定義している。スキーマ変更時は `TypedDict` 定義・docstring・`validate_document()` を同時に更新すること。
+- `ifc` サブパッケージでは ifcopenshell の型（`ifcopenshell.file` / `ifcopenshell.entity_instance`）を注釈にのみ使う場合 `if TYPE_CHECKING:` ブロックで import する。
+- `vs` モジュールは型スタブが存在しないため `ignore_missing_imports` で許容し、vs ハンドルは `Any` で扱う。VectorWorks 公式 `vs.py` スタブ（`tests/vs.py`）は型検査対象から除外している。
+- 検証前の命令セット（JSON 由来の信頼できない入力）を受ける関数（`validate_document()` / `execute_document()`）の引数は `Any` とし、検証済みの値だけを `Document` 型として扱う。
+
 ## スクリプトの実行方法
 
 このスクリプトは単独の Python プログラムとして動作しません。**VectorWorks 内でプラグインスクリプトとして実行する必要があります**。`vs` モジュールは VectorWorks 独自の Python スクリプト API であり、pip でインストールすることはできません。

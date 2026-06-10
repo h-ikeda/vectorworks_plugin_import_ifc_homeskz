@@ -1,4 +1,6 @@
 """IFC 解析フェーズ (ifc.member) のテスト。vs に依存せず実 IFC データで検証できる。"""
+from __future__ import annotations
+
 import json
 import math
 from unittest.mock import MagicMock
@@ -19,13 +21,15 @@ from vectorworks_plugin_import_ifc_homeskz.ifc.member import (
 # テスト用 IFC エンティティ生成ヘルパー
 # ---------------------------------------------------------------------------
 
-def make_storey(ifc, name, elevation):
+def make_storey(ifc: ifcopenshell.file, name: str, elevation: float) -> ifcopenshell.entity_instance:
     """テスト用 IfcBuildingStorey を生成する。"""
     return ifc.create_entity('IfcBuildingStorey', Name=name, Elevation=elevation)
 
 
-def make_beam(ifc, storey, ox, oy, dx=1.0, dy=0.0,
-              width=120.0, height=180.0, length=3000.0, material_name=''):
+def make_beam(ifc: ifcopenshell.file, storey: ifcopenshell.entity_instance,
+              ox: float, oy: float, dx: float = 1.0, dy: float = 0.0,
+              width: float = 120.0, height: float = 180.0, length: float = 3000.0,
+              material_name: str = '') -> ifcopenshell.entity_instance:
     """テスト用 IfcBeam を生成して storey に追加する。
 
     Parameters
@@ -82,7 +86,8 @@ def make_beam(ifc, storey, ox, oy, dx=1.0, dy=0.0,
     return beam
 
 
-def make_grid_axis(ifc, name, x1, y1, x2, y2):
+def make_grid_axis(ifc: ifcopenshell.file, name: str,
+                   x1: float, y1: float, x2: float, y2: float) -> None:
     """テスト用 IfcGridAxis を生成する（グリッド中心算出に使用）。"""
     pts = [
         ifc.create_entity('IfcCartesianPoint', Coordinates=[x1, y1]),
@@ -97,7 +102,7 @@ def make_grid_axis(ifc, name, x1, y1, x2, y2):
 # ---------------------------------------------------------------------------
 
 class TestGetPlacement2D:
-    def test_extracts_origin(self):
+    def test_extracts_origin(self) -> None:
         ifc = ifcopenshell.file()
         pt = ifc.create_entity('IfcCartesianPoint', Coordinates=[1000.0, 2000.0, 0.0])
         ap = ifc.create_entity('IfcAxis2Placement3D', Location=pt)
@@ -110,18 +115,20 @@ class TestGetPlacement2D:
         assert ox == pytest.approx(1000.0)
         assert oy == pytest.approx(2000.0)
 
-    def test_defaults_direction_to_x_axis_when_no_axis(self):
+    def test_defaults_direction_to_x_axis_when_no_axis(self) -> None:
         ifc = ifcopenshell.file()
         pt = ifc.create_entity('IfcCartesianPoint', Coordinates=[0.0, 0.0, 0.0])
         ap = ifc.create_entity('IfcAxis2Placement3D', Location=pt)
         lp = ifc.create_entity('IfcLocalPlacement', RelativePlacement=ap)
         beam = ifc.create_entity('IfcBeam', ObjectPlacement=lp)
 
-        ox, oy, dx, dy = _get_placement_2d(beam)
+        result = _get_placement_2d(beam)
+        assert result is not None
+        ox, oy, dx, dy = result
         assert dx == pytest.approx(1.0)
         assert dy == pytest.approx(0.0)
 
-    def test_extracts_axis_direction(self):
+    def test_extracts_axis_direction(self) -> None:
         ifc = ifcopenshell.file()
         pt = ifc.create_entity('IfcCartesianPoint', Coordinates=[0.0, 0.0, 0.0])
         axis = ifc.create_entity('IfcDirection', DirectionRatios=[0.0, 1.0, 0.0])
@@ -129,11 +136,13 @@ class TestGetPlacement2D:
         lp = ifc.create_entity('IfcLocalPlacement', RelativePlacement=ap)
         beam = ifc.create_entity('IfcBeam', ObjectPlacement=lp)
 
-        ox, oy, dx, dy = _get_placement_2d(beam)
+        result = _get_placement_2d(beam)
+        assert result is not None
+        ox, oy, dx, dy = result
         assert dx == pytest.approx(0.0)
         assert dy == pytest.approx(1.0)
 
-    def test_normalizes_direction(self):
+    def test_normalizes_direction(self) -> None:
         ifc = ifcopenshell.file()
         pt = ifc.create_entity('IfcCartesianPoint', Coordinates=[0.0, 0.0, 0.0])
         # 長さ 2 のベクトル
@@ -142,15 +151,17 @@ class TestGetPlacement2D:
         lp = ifc.create_entity('IfcLocalPlacement', RelativePlacement=ap)
         beam = ifc.create_entity('IfcBeam', ObjectPlacement=lp)
 
-        ox, oy, dx, dy = _get_placement_2d(beam)
+        result = _get_placement_2d(beam)
+        assert result is not None
+        ox, oy, dx, dy = result
         assert math.hypot(dx, dy) == pytest.approx(1.0)
 
-    def test_returns_none_when_no_placement(self):
+    def test_returns_none_when_no_placement(self) -> None:
         elem = MagicMock()
         elem.ObjectPlacement = None
         assert _get_placement_2d(elem) is None
 
-    def test_returns_none_for_non_local_placement(self):
+    def test_returns_none_for_non_local_placement(self) -> None:
         placement = MagicMock()
         placement.is_a = lambda t: False
         elem = MagicMock()
@@ -163,7 +174,8 @@ class TestGetPlacement2D:
 # ---------------------------------------------------------------------------
 
 class TestGetProfileDims:
-    def _make_element(self, width, height, length, rep_id='Body'):
+    def _make_element(self, width: float, height: float, length: float,
+                      rep_id: str = 'Body') -> MagicMock:
         profile = MagicMock()
         profile.is_a = lambda t: t == 'IfcRectangleProfileDef'
         profile.XDim = float(width)
@@ -185,20 +197,20 @@ class TestGetProfileDims:
         elem.Representation = rep
         return elem
 
-    def test_extracts_width_height_length(self):
+    def test_extracts_width_height_length(self) -> None:
         elem = self._make_element(120.0, 180.0, 3000.0)
         assert _get_profile_dims(elem) == (120.0, 180.0, 3000.0)
 
-    def test_returns_none_when_no_representation(self):
+    def test_returns_none_when_no_representation(self) -> None:
         elem = MagicMock()
         elem.Representation = None
         assert _get_profile_dims(elem) is None
 
-    def test_skips_non_body_representation(self):
+    def test_skips_non_body_representation(self) -> None:
         elem = self._make_element(120.0, 180.0, 3000.0, rep_id='Axis')
         assert _get_profile_dims(elem) is None
 
-    def test_skips_non_rectangle_profile(self):
+    def test_skips_non_rectangle_profile(self) -> None:
         profile = MagicMock()
         profile.is_a = lambda t: False  # IfcRectangleProfileDef でない
 
@@ -222,7 +234,7 @@ class TestGetProfileDims:
 # ---------------------------------------------------------------------------
 
 class TestGetMaterialName:
-    def test_extracts_ifc_material_name(self):
+    def test_extracts_ifc_material_name(self) -> None:
         mat = MagicMock()
         mat.is_a = lambda t: t == 'IfcMaterial'
         mat.Name = '杉対称異等級集成材E105-F355'
@@ -235,7 +247,7 @@ class TestGetMaterialName:
         elem.HasAssociations = [rel]
         assert _get_material_name(elem) == '杉対称異等級集成材E105-F355'
 
-    def test_extracts_first_material_from_material_list(self):
+    def test_extracts_first_material_from_material_list(self) -> None:
         mat0 = MagicMock()
         mat0.Name = '1 番目の材種'
         mat_list = MagicMock()
@@ -250,12 +262,12 @@ class TestGetMaterialName:
         elem.HasAssociations = [rel]
         assert _get_material_name(elem) == '1 番目の材種'
 
-    def test_returns_empty_when_no_association(self):
+    def test_returns_empty_when_no_association(self) -> None:
         elem = MagicMock()
         elem.HasAssociations = []
         assert _get_material_name(elem) == ''
 
-    def test_skips_non_material_relations(self):
+    def test_skips_non_material_relations(self) -> None:
         rel = MagicMock()
         rel.is_a = lambda t: False  # IfcRelAssociatesMaterial でない
 
@@ -269,14 +281,14 @@ class TestGetMaterialName:
 # ---------------------------------------------------------------------------
 
 class TestMakeMemberId:
-    def test_with_material(self):
+    def test_with_material(self) -> None:
         assert make_member_id(120, 180, '杉対称異等級集成材E105-F355') == \
             '120×180 - 杉対称異等級集成材E105-F355'
 
-    def test_without_material(self):
+    def test_without_material(self) -> None:
         assert make_member_id(120, 180, '') == '120×180'
 
-    def test_rounds_float_dimensions(self):
+    def test_rounds_float_dimensions(self) -> None:
         assert make_member_id(120.4, 179.6, '') == '120×180'
 
 
@@ -285,10 +297,10 @@ class TestMakeMemberId:
 # ---------------------------------------------------------------------------
 
 class TestBuildMemberCommands:
-    def test_empty_ifc_returns_empty_list(self):
+    def test_empty_ifc_returns_empty_list(self) -> None:
         assert build_member_commands(ifcopenshell.file()) == []
 
-    def test_builds_command_per_beam(self):
+    def test_builds_command_per_beam(self) -> None:
         ifc = ifcopenshell.file()
         storey = make_storey(ifc, '1FL', 473.0)
         make_beam(ifc, storey, 0.0, 0.0)
@@ -299,7 +311,7 @@ class TestBuildMemberCommands:
         assert len(commands) == 2
         assert all(c['layer'] == '1-横架材天端' for c in commands)
 
-    def test_top_story_uses_eaves_layer(self):
+    def test_top_story_uses_eaves_layer(self) -> None:
         """最上階 (RFL) のビームは R-軒高レイヤを指定する。"""
         ifc = ifcopenshell.file()
         storey = make_storey(ifc, 'RFL', 5973.0)
@@ -311,7 +323,7 @@ class TestBuildMemberCommands:
         # 最上階の配置高さはストーリ高さそのもの
         assert commands[0]['elevation'] == pytest.approx(5973.0)
 
-    def test_assigns_layer_per_story(self):
+    def test_assigns_layer_per_story(self) -> None:
         ifc = ifcopenshell.file()
         s1 = make_storey(ifc, '1FL', 473.0)
         s2 = make_storey(ifc, '2FL', 3273.0)
@@ -323,7 +335,7 @@ class TestBuildMemberCommands:
         assert '1-横架材天端' in layers
         assert '2-横架材天端' in layers
 
-    def test_applies_grid_center_offset(self):
+    def test_applies_grid_center_offset(self) -> None:
         """グリッド中心オフセットを引いた座標で命令を組み立てることを確認する。"""
         ifc = ifcopenshell.file()
         # グリッド軸: X=0〜2000, Y=0〜2000 → center=(1000, 1000)
@@ -343,7 +355,7 @@ class TestBuildMemberCommands:
         # layer_elevation = storey.Elevation + resolve_beam_top_offset = 473 + 0 = 473
         assert command['elevation'] == pytest.approx(473.0)
 
-    def test_sets_member_id_and_dimensions(self):
+    def test_sets_member_id_and_dimensions(self) -> None:
         ifc = ifcopenshell.file()
         storey = make_storey(ifc, '1FL', 473.0)
         make_storey(ifc, 'RFL', 5973.0)
@@ -355,7 +367,7 @@ class TestBuildMemberCommands:
         assert commands[0]['width'] == pytest.approx(120.0)
         assert commands[0]['height'] == pytest.approx(180.0)
 
-    def test_skips_beam_without_placement(self):
+    def test_skips_beam_without_placement(self) -> None:
         ifc = ifcopenshell.file()
         storey = make_storey(ifc, '1FL', 473.0)
         make_storey(ifc, 'RFL', 5973.0)
@@ -366,7 +378,7 @@ class TestBuildMemberCommands:
 
         assert build_member_commands(ifc) == []
 
-    def test_commands_are_json_serializable(self):
+    def test_commands_are_json_serializable(self) -> None:
         ifc = ifcopenshell.file()
         storey = make_storey(ifc, '1FL', 473.0)
         make_storey(ifc, 'RFL', 5973.0)

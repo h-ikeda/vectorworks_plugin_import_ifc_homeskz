@@ -1,17 +1,28 @@
 """通り芯 (IfcGridAxis) の解析と grid 命令の組み立て。vs 非依存。"""
+from __future__ import annotations
+
+from typing import TYPE_CHECKING
+
+from ..document import GridCommand
+
+if TYPE_CHECKING:
+    import ifcopenshell
 
 CLASS_X = '01作図-01線-01基準線-01通り芯-X通り'
 CLASS_Y = '01作図-01線-01基準線-01通り芯-Y通り'
 TARGET_LAYER = '共通'
 
+# (x1, y1, x2, y2, 軸名)
+Line = tuple[float, float, float, float, str]
 
-def resolve_lines(ifc_file):
+
+def resolve_lines(ifc_file: ifcopenshell.file) -> tuple[list[Line], float, float]:
     """IfcGridAxis エンティティを座標に解決し (lines_to_draw, center_x, center_y) を返す。
 
     lines_to_draw: [(x1, y1, x2, y2, name), ...]
     """
-    lines_to_draw = []
-    drawn_keys = set()
+    lines_to_draw: list[Line] = []
+    drawn_keys: set[tuple[tuple[float, float], ...]] = set()
 
     min_x, max_x = float('inf'), float('-inf')
     min_y, max_y = float('inf'), float('-inf')
@@ -50,7 +61,7 @@ def resolve_lines(ifc_file):
     return lines_to_draw, center_x, center_y
 
 
-def determine_class(name, cx1, cy1, cx2, cy2):
+def determine_class(name: str, cx1: float, cy1: float, cx2: float, cy2: float) -> str:
     """グリッド線のクラス名（X通り or Y通り）を返す。"""
     if name.upper().startswith('X'):
         return CLASS_X
@@ -60,14 +71,14 @@ def determine_class(name, cx1, cy1, cx2, cy2):
         return CLASS_X if abs(cx1 - cx2) < abs(cy1 - cy2) else CLASS_Y
 
 
-def build_grid_commands(ifc_file):
+def build_grid_commands(ifc_file: ifcopenshell.file) -> list[GridCommand]:
     """IFC の通り芯から grid 命令のリストを組み立てる。
 
     座標はバウンディングボックス中心でセンタリングし VectorWorks 原点付近に揃える。
     """
     lines_to_draw, center_x, center_y = resolve_lines(ifc_file)
 
-    commands = []
+    commands: list[GridCommand] = []
     for x1, y1, x2, y2, name in lines_to_draw:
         cx1, cy1 = x1 - center_x, y1 - center_y
         cx2, cy2 = x2 - center_x, y2 - center_y

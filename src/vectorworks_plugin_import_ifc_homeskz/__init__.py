@@ -9,6 +9,8 @@
 
 命令セットのスキーマは ``document.py`` を参照。
 """
+from __future__ import annotations
+
 import json
 
 import ifcopenshell
@@ -20,7 +22,7 @@ from .ifc.grid import TARGET_LAYER
 __all__ = ['build_document', 'run', 'validate_document']
 
 
-def run():
+def run() -> None:
     # vs に依存するモジュールは VectorWorks 上での実行時のみ読み込む。
     # これにより ifc パッケージ（解析フェーズ）は通常の Python 環境でも利用できる。
     import vs

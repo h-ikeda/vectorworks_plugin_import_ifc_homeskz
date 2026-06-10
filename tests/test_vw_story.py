@@ -1,9 +1,13 @@
 """描画フェーズ (vw.story) のテスト。vs をモックし手書きの story 命令で検証する。"""
+from __future__ import annotations
+
 import importlib
 from unittest.mock import MagicMock, patch
 
+from vectorworks_plugin_import_ifc_homeskz.document import StoryCommand
 
-def make_story_commands():
+
+def make_story_commands() -> list[StoryCommand]:
     """3 階建て (1階・2階・屋根) の story 命令セットを返す。"""
     return [
         {
@@ -29,29 +33,30 @@ def make_story_commands():
     ]
 
 
-def _make_stateful_vs_mock():
+def _make_stateful_vs_mock() -> MagicMock:
     """CreateStory/CreateLayer/CreateLevelTemplateN の作成有無を追跡するステートフルな vs モック。"""
     vs_mock = MagicMock()
     null_handle = object()
     vs_mock.Handle.return_value = null_handle
 
-    created = set()
+    created: set[str] = set()
     template_counter = [0]
 
-    def get_obj(name):
+    def get_obj(name: str) -> object:
         if name in created:
             return 'HANDLE_' + name
         return null_handle
 
-    def create_story(name, suffix):
+    def create_story(name: str, suffix: str) -> bool:
         created.add(name)
         return True
 
-    def create_layer(name, layer_type):
+    def create_layer(name: str, layer_type: int) -> str:
         created.add(name)
         return 'HANDLE_' + name
 
-    def create_level_template(layer_name, scale, level_type, elev, wall_h):
+    def create_level_template(layer_name: str, scale: float, level_type: str,
+                              elev: float, wall_h: float) -> tuple[bool, int]:
         idx = template_counter[0]
         template_counter[0] += 1
         return (True, idx)
@@ -67,7 +72,7 @@ def _make_stateful_vs_mock():
     return vs_mock
 
 
-def _run_execute_stories(vs_mock, commands):
+def _run_execute_stories(vs_mock: MagicMock, commands: list[StoryCommand]) -> int:
     with patch.dict('sys.modules', {'vs': vs_mock}):
         import vectorworks_plugin_import_ifc_homeskz.vw.story as vw_story
         importlib.reload(vw_story)
@@ -75,7 +80,7 @@ def _run_execute_stories(vs_mock, commands):
 
 
 class TestExecuteStories:
-    def test_creates_stories_levels_and_layers(self):
+    def test_creates_stories_levels_and_layers(self) -> None:
         vs_mock = _make_stateful_vs_mock()
 
         count = _run_execute_stories(vs_mock, make_story_commands())
@@ -113,7 +118,7 @@ class TestExecuteStories:
         add_calls = [call.args for call in vs_mock.AddLevelFromTemplate.call_args_list]
         # 屋根は 1 つだけ (軒高)、それ以外は 2 つ (FL, 横架材天端) = 計 5 呼び出し
         assert len(add_calls) == 5
-        story_call_counts = {}
+        story_call_counts: dict[str, int] = {}
         for h, _ in add_calls:
             story_call_counts[h] = story_call_counts.get(h, 0) + 1
         assert story_call_counts['HANDLE_1階'] == 2
@@ -129,16 +134,16 @@ class TestExecuteStories:
         assert '2-横架材天端' in renamed_names
         assert 'R-軒高' in renamed_names
 
-    def test_empty_commands_return_zero(self):
+    def test_empty_commands_return_zero(self) -> None:
         vs_mock = _make_stateful_vs_mock()
         count = _run_execute_stories(vs_mock, [])
         assert count == 0
         vs_mock.CreateStory.assert_not_called()
         vs_mock.CreateLayerLevelType.assert_not_called()
 
-    def test_single_roof_story(self):
+    def test_single_roof_story(self) -> None:
         vs_mock = _make_stateful_vs_mock()
-        commands = [
+        commands: list[StoryCommand] = [
             {
                 'name': '屋根', 'suffix': 'R', 'elevation': 0.0,
                 'levels': [{'type': '軒高', 'offset': 0.0, 'layer': 'R-軒高'}],
@@ -154,7 +159,7 @@ class TestExecuteStories:
         level_type_names = [call.args[0] for call in vs_mock.CreateLayerLevelType.call_args_list]
         assert level_type_names == ['軒高']
 
-    def test_skips_story_when_creation_fails(self):
+    def test_skips_story_when_creation_fails(self) -> None:
         vs_mock = _make_stateful_vs_mock()
         # CreateStory が作成に失敗する (created に追加されない)
         vs_mock.CreateStory.side_effect = lambda name, suffix: False
@@ -165,7 +170,7 @@ class TestExecuteStories:
         vs_mock.SetStoryElevationN.assert_not_called()
         vs_mock.AddLevelFromTemplate.assert_not_called()
 
-    def test_reuses_existing_story(self):
+    def test_reuses_existing_story(self) -> None:
         vs_mock = _make_stateful_vs_mock()
         # GetObject が最初から非 null を返す (既存ストーリ)
         vs_mock.GetObject.side_effect = lambda name: 'HANDLE_' + name

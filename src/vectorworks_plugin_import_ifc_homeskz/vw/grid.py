@@ -1,10 +1,14 @@
 """grid 命令の描画。GridAxis プラグインオブジェクトを配置する。"""
+from __future__ import annotations
+
 import vs
+
+from ..document import GridCommand
 
 PLUGIN_NAME = 'GridAxis'
 
 
-def draw_grid(command):
+def draw_grid(command: GridCommand) -> None:
     """grid 命令 1 件を GridAxis オブジェクトとして描画する。
 
     プラグインが利用できない場合は通常の直線にフォールバックする。
@@ -36,7 +40,7 @@ def draw_grid(command):
         vs.SetClass(fallback_line, command['class'])
 
 
-def execute_grids(commands):
+def execute_grids(commands: list[GridCommand]) -> int:
     """grid 命令のリストを描画し、描画本数を返す。
 
     配置先レイヤが存在しない場合は作成してアクティブにする。

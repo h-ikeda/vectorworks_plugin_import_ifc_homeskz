@@ -4,15 +4,24 @@ IFC の IfcBeam / IfcMember を走査し、各階の横架材天端レイヤ
 （最上階は軒高レイヤ）に配置する member 命令を生成する。
 構造材 ID は断面寸法と材種から "{幅}×{背} - {材種}" の形式で自動生成する。
 """
-import math
+from __future__ import annotations
 
+import math
+from typing import TYPE_CHECKING
+
+from ..document import MemberCommand
 from .grid import resolve_lines
 from .story import LEVEL_BEAM_TOP, LEVEL_EAVES, layer_prefix_for, resolve_beam_top_offset
+
+if TYPE_CHECKING:
+    import ifcopenshell
 
 _IFC_MEMBER_TYPES = ('IfcBeam', 'IfcMember')
 
 
-def _get_placement_2d(element):
+def _get_placement_2d(
+    element: ifcopenshell.entity_instance,
+) -> tuple[float, float, float, float] | None:
     """IfcProduct のローカル配置から 2D 座標 (ox, oy, dx, dy) を返す。
 
     取得できない場合は None を返す。
@@ -47,7 +56,9 @@ def _get_placement_2d(element):
     return ox, oy, dx, dy
 
 
-def _get_profile_dims(element):
+def _get_profile_dims(
+    element: ifcopenshell.entity_instance,
+) -> tuple[float, float, float] | None:
     """IfcProduct の体ジオメトリから断面寸法 (width, height, length) を返す。
 
     Body 表現の IfcExtrudedAreaSolid + IfcRectangleProfileDef を解析する。
@@ -69,7 +80,7 @@ def _get_profile_dims(element):
     return None
 
 
-def _get_material_name(element):
+def _get_material_name(element: ifcopenshell.entity_instance) -> str:
     """IfcProduct に関連付けられた材種名を返す。見つからない場合は空文字。"""
     for rel in getattr(element, 'HasAssociations', ()):
         if not rel.is_a('IfcRelAssociatesMaterial'):
@@ -86,7 +97,7 @@ def _get_material_name(element):
     return ''
 
 
-def make_member_id(width, height, material):
+def make_member_id(width: float, height: float, material: str) -> str:
     """断面寸法と材種名から構造材 ID 文字列を生成する。
 
     例: make_member_id(120, 180, '杉対称異等級集成材E105-F355')
@@ -97,7 +108,7 @@ def make_member_id(width, height, material):
     return f'{w}×{h} - {material}' if material else f'{w}×{h}'
 
 
-def build_member_commands(ifc_file):
+def build_member_commands(ifc_file: ifcopenshell.file) -> list[MemberCommand]:
     """IFC の横架材から member 命令のリストを組み立てる。
 
     配置座標は通り芯と同じグリッド中心オフセットで補正する。
@@ -114,7 +125,7 @@ def build_member_commands(ifc_file):
         return []
 
     top_idx = len(storeys) - 1
-    commands = []
+    commands: list[MemberCommand] = []
 
     for i, storey in enumerate(storeys):
         is_top = (i == top_idx)
