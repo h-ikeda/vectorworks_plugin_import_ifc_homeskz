@@ -9,6 +9,11 @@ on:
 jobs:
   test:
     runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        # requires-python (>=3.9) の下限と新しめのバージョンで検証する
+        # (Python 3.9 では ifcopenshell は 3.9 対応の最終版 0.8.4.post1 が解決される)
+        python-version: ["3.9", "3.11"]
 
     steps:
       - uses: actions/checkout@v4
@@ -16,7 +21,7 @@ jobs:
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
-          python-version: "3.11"
+          python-version: ${{ matrix.python-version }}
 
       - name: Install package and test dependencies
         run: pip install -e ".[test]"
@@ -44,6 +49,8 @@ jobs:
         run: pytest tests/ -v --cov=src/vectorworks_plugin_import_ifc_homeskz --cov-report=xml
 
       - name: Upload coverage to Codecov
+        # カバレッジは matrix のうち 1 バージョン分のみアップロードする
+        if: matrix.python-version == '3.11'
         uses: codecov/codecov-action@v4
         with:
           files: ./coverage.xml
