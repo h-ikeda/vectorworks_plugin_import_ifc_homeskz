@@ -1,4 +1,7 @@
-import vs
+"""ストーリ (IfcBuildingStorey) の解析と story 命令の組み立て。vs 非依存。
+
+ホームズ君 IFC の高さ表現ルールを利用してストーリを構築する。
+"""
 
 LEVEL_FL = 'FL'
 LEVEL_BEAM_TOP = '横架材天端'
@@ -82,71 +85,32 @@ def layer_prefix_for(index, is_top):
     return story_suffix_for(index, is_top)
 
 
-def create_story_level_via_template(story_handle, level_type, elevation, desired_layer_name):
-    """Story Level Template 経由でストーリレベルとそれに紐づくレイヤを作成する。
+def build_story_commands(ifc_file):
+    """IFC のストーリから story 命令のリストを組み立てる。
 
-    VW 2026 では AddStoryLevelN + AssociateLayerWithStory ではレイヤ→レベルの紐付けが
-    UI 上 <なし> になるため、ドキュメントで明示的にバインドが保証されている
-    CreateLevelTemplateN + AddLevelFromTemplate を使う。
-
-    なお AddLevelFromTemplate は CreateStory の suffix を末尾に付加した名前で
-    レイヤを作る (例: "1-FL-1")。意図した名前 ("1-FL") にするため、
-    GetLayerForStory でハンドルを取り直して SetName でリネームする。
+    一般階は FL(0) と 横架材天端(負オフセット) の 2 レベル、最上階は 軒高(0) のみ。
     """
-    result = vs.CreateLevelTemplateN(desired_layer_name, 1.0, level_type, elevation, 2400.0)
-    if isinstance(result, tuple):
-        ok, template_idx = result
-    else:
-        ok, template_idx = bool(result), -1
-
-    if not (ok and template_idx is not None and template_idx >= 0):
-        return
-    if not vs.AddLevelFromTemplate(story_handle, template_idx):
-        return
-    layer_h = vs.GetLayerForStory(story_handle, level_type)
-    if layer_h != vs.Handle(0):
-        vs.SetName(layer_h, desired_layer_name)
-
-
-def import_stories(ifc_file):
-    """IFC からストーリ・ストーリレベル・デザインレイヤを生成し、作成階数を返す。"""
     stories = collect_stories(ifc_file)
-    if not stories:
-        return 0
 
-    vs.CreateLayerLevelType(LEVEL_FL)
-    vs.CreateLayerLevelType(LEVEL_BEAM_TOP)
-    vs.CreateLayerLevelType(LEVEL_EAVES)
-
+    commands = []
     n = len(stories)
-    count = 0
     for i, (elevation, beam_offset) in enumerate(stories):
         is_top = i == n - 1
-        story_name = story_name_for(i, is_top)
-
-        story_h = vs.GetObject(story_name)
-        if story_h == vs.Handle(0):
-            vs.CreateStory(story_name, story_suffix_for(i, is_top))
-            story_h = vs.GetObject(story_name)
-        if story_h == vs.Handle(0):
-            continue
-
-        # ストーリ高さは CreateStory 直後・レベル追加前に設定する。
-        # 直後に設定しないと「既定高さ 0 のストーリが複数」となり次の
-        # CreateStory が衝突して失敗するケースがある。
-        vs.SetStoryElevationN(story_h, elevation)
-
         prefix = layer_prefix_for(i, is_top)
         if is_top:
-            level_specs = [(LEVEL_EAVES, 0.0, f'{prefix}-{LEVEL_EAVES}')]
-        else:
-            level_specs = [
-                (LEVEL_FL, 0.0, f'{prefix}-{LEVEL_FL}'),
-                (LEVEL_BEAM_TOP, beam_offset, f'{prefix}-{LEVEL_BEAM_TOP}'),
+            levels = [
+                {'type': LEVEL_EAVES, 'offset': 0.0, 'layer': f'{prefix}-{LEVEL_EAVES}'},
             ]
-        for level_type, level_offset, layer_name in level_specs:
-            create_story_level_via_template(story_h, level_type, level_offset, layer_name)
-
-        count += 1
-
-    return count
+        else:
+            levels = [
+                {'type': LEVEL_FL, 'offset': 0.0, 'layer': f'{prefix}-{LEVEL_FL}'},
+                {'type': LEVEL_BEAM_TOP, 'offset': beam_offset,
+                 'layer': f'{prefix}-{LEVEL_BEAM_TOP}'},
+            ]
+        commands.append({
+            'name': story_name_for(i, is_top),
+            'suffix': story_suffix_for(i, is_top),
+            'elevation': elevation,
+            'levels': levels,
+        })
+    return commands

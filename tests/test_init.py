@@ -1,3 +1,8 @@
+"""run() のエンドツーエンドテスト。
+
+IFC 解析フェーズ (ifc) → JSON 命令セット → 描画フェーズ (vw) の
+パイプライン全体を vs モックで検証する。
+"""
 import importlib
 import os
 import tempfile
@@ -32,6 +37,7 @@ def _make_vs_mock():
     def create_level_template(layer_name, scale, level_type, elev, wall_h):
         idx = template_counter[0]
         template_counter[0] += 1
+        created.add(layer_name)
         return (True, idx)
 
     vs_mock.GetObject.side_effect = get_obj
@@ -47,16 +53,16 @@ def _make_vs_mock():
     return vs_mock
 
 
-def _reload_package():
-    import vectorworks_plugin_import_ifc_homeskz as pkg
-    import vectorworks_plugin_import_ifc_homeskz.grid as grid_module
-    import vectorworks_plugin_import_ifc_homeskz.member as member_module
-    import vectorworks_plugin_import_ifc_homeskz.story as story_module
-    importlib.reload(grid_module)
-    importlib.reload(member_module)
-    importlib.reload(story_module)
-    importlib.reload(pkg)
-    return pkg
+def _reload_vw_modules():
+    """vs モックを差し替えた状態で vs 依存モジュール (vw) を再読込する。"""
+    import vectorworks_plugin_import_ifc_homeskz.vw as vw
+    import vectorworks_plugin_import_ifc_homeskz.vw.grid as vw_grid
+    import vectorworks_plugin_import_ifc_homeskz.vw.member as vw_member
+    import vectorworks_plugin_import_ifc_homeskz.vw.story as vw_story
+    importlib.reload(vw_grid)
+    importlib.reload(vw_member)
+    importlib.reload(vw_story)
+    importlib.reload(vw)
 
 
 class TestRun:
@@ -65,7 +71,7 @@ class TestRun:
         vs_mock.GetFileN.return_value = (False, '')
 
         with patch.dict('sys.modules', {'vs': vs_mock}):
-            pkg = _reload_package()
+            import vectorworks_plugin_import_ifc_homeskz as pkg
             pkg.run()
 
         vs_mock.AlrtDialog.assert_called_once_with('キャンセルされました。')
@@ -91,7 +97,8 @@ class TestRun:
             vs_mock.GetFileN.return_value = (True, ifc_path)
 
             with patch.dict('sys.modules', {'vs': vs_mock}):
-                pkg = _reload_package()
+                _reload_vw_modules()
+                import vectorworks_plugin_import_ifc_homeskz as pkg
                 pkg.run()
 
             completion = vs_mock.AlrtDialog.call_args[0][0]
@@ -114,7 +121,8 @@ class TestRun:
         vs_mock.GetFileN.return_value = (True, '/nonexistent/path/file.ifc')
 
         with patch.dict('sys.modules', {'vs': vs_mock}):
-            pkg = _reload_package()
+            _reload_vw_modules()
+            import vectorworks_plugin_import_ifc_homeskz as pkg
             pkg.run()
 
         call_arg = vs_mock.AlrtDialog.call_args[0][0]

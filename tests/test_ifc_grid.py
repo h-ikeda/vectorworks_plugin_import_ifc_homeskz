@@ -1,11 +1,15 @@
+"""IFC 解析フェーズ (ifc.grid) のテスト。vs に依存せず実 IFC データで検証できる。"""
+import json
 from unittest.mock import MagicMock
 
 import ifcopenshell
 import pytest
 
-from vectorworks_plugin_import_ifc_homeskz.grid import (
+from vectorworks_plugin_import_ifc_homeskz.ifc.grid import (
     CLASS_X,
     CLASS_Y,
+    TARGET_LAYER,
+    build_grid_commands,
     determine_class,
     resolve_lines,
 )
@@ -118,46 +122,39 @@ class TestDetermineClass:
         assert determine_class('D', 0, 0, 1000, 300) == CLASS_Y
 
 
-class TestImportGrids:
-    """vs モジュールをモックして import_grids() の動作を検証する。"""
-
-    def _make_vs_mock(self):
-        vs_mock = MagicMock()
-        vs_mock.Handle.return_value = object()
-        vs_mock.GetObject.return_value = None
-        vs_mock.LNewObj.return_value = None
-        vs_mock.CreateCustomObjectPath.return_value = None
-        return vs_mock
-
-    def test_returns_drawn_count(self):
-        from unittest.mock import patch as _patch
-
-        vs_mock = self._make_vs_mock()
+class TestBuildGridCommands:
+    def test_builds_centered_commands(self):
+        # バウンディングボックス 0..2000 × 0..1000 → 中心 (1000, 500)
         ifc = make_ifc_model(
-            {'name': 'X1', 'points': [(0.0, 1000.0), (5000.0, 1000.0)]},
-            {'name': 'Y1', 'points': [(0.0, 0.0), (5000.0, 0.0)]},
+            {'name': 'Y1', 'points': [(0.0, 0.0), (2000.0, 0.0)]},
+            {'name': 'X1', 'points': [(0.0, 0.0), (0.0, 1000.0)]},
         )
+        commands = build_grid_commands(ifc)
+        assert len(commands) == 2
 
-        with _patch.dict('sys.modules', {'vs': vs_mock}):
-            import importlib
+        by_label = {c['label']: c for c in commands}
+        assert by_label['Y1']['start'] == [-1000.0, -500.0]
+        assert by_label['Y1']['end'] == [1000.0, -500.0]
+        assert by_label['X1']['start'] == [-1000.0, -500.0]
+        assert by_label['X1']['end'] == [-1000.0, 500.0]
 
-            import vectorworks_plugin_import_ifc_homeskz.grid as grid_module
-            importlib.reload(grid_module)
-            count = grid_module.import_grids(ifc)
+    def test_assigns_layer_and_class(self):
+        ifc = make_ifc_model(
+            {'name': 'Y1', 'points': [(0.0, 0.0), (2000.0, 0.0)]},
+            {'name': 'X1', 'points': [(0.0, 0.0), (0.0, 1000.0)]},
+        )
+        commands = build_grid_commands(ifc)
+        by_label = {c['label']: c for c in commands}
+        assert by_label['X1']['layer'] == TARGET_LAYER
+        assert by_label['X1']['class'] == CLASS_X
+        assert by_label['Y1']['class'] == CLASS_Y
 
-        assert count == 2
+    def test_empty_ifc_returns_empty_list(self):
+        assert build_grid_commands(ifcopenshell.file()) == []
 
-    def test_no_lines_returns_zero(self):
-        from unittest.mock import patch as _patch
-
-        vs_mock = self._make_vs_mock()
-        ifc = ifcopenshell.file()
-
-        with _patch.dict('sys.modules', {'vs': vs_mock}):
-            import importlib
-
-            import vectorworks_plugin_import_ifc_homeskz.grid as grid_module
-            importlib.reload(grid_module)
-            count = grid_module.import_grids(ifc)
-
-        assert count == 0
+    def test_commands_are_json_serializable(self):
+        ifc = make_ifc_model(
+            {'name': 'X1', 'points': [(0.0, 0.0), (0.0, 1000.0)]},
+        )
+        commands = build_grid_commands(ifc)
+        assert json.loads(json.dumps(commands)) == commands
