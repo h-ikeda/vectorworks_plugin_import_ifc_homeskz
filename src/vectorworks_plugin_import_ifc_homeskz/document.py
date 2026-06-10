@@ -44,6 +44,7 @@
         ]
     }
 """
+import json
 
 DOCUMENT_VERSION = 1
 
@@ -140,4 +141,12 @@ def validate_document(document):
         _validate_grid(i, command)
     for i, command in enumerate(document['members']):
         _validate_member(i, command)
+    try:
+        # スキーマ検証だけでは未知キー配下の非直列化値を検出できないため、
+        # JSON 直列化可能性も明示的に検証する (NaN/Infinity も拒否)
+        json.dumps(document, allow_nan=False)
+    except (TypeError, ValueError) as e:
+        raise DocumentValidationError(
+            f'命令セットは JSON 直列化可能である必要があります: {e}'
+        ) from e
     return document

@@ -68,6 +68,16 @@ class TestResolveBeamTopOffset:
         storey = make_storey(ifc, '1FL', 473.0)
         assert resolve_beam_top_offset(storey) == 0.0
 
+    def test_returns_minimum_offset_regardless_of_order(self):
+        """複数候補があるときは列挙順に依らず最小の負値を返す。"""
+        ifc = ifcopenshell.file()
+        storey = make_storey(ifc, '1FL', 473.0, [('IfcColumn', -36.0), ('IfcSlab', -48.0)])
+        assert resolve_beam_top_offset(storey) == -48.0
+
+        ifc2 = ifcopenshell.file()
+        storey2 = make_storey(ifc2, '1FL', 473.0, [('IfcSlab', -48.0), ('IfcColumn', -36.0)])
+        assert resolve_beam_top_offset(storey2) == -48.0
+
 
 class TestCollectStories:
     def test_sorts_by_elevation_and_marks_top(self):

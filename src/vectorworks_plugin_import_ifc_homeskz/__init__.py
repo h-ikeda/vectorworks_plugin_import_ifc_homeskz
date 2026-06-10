@@ -17,7 +17,7 @@ from .document import validate_document
 from .ifc import build_document
 from .ifc.grid import TARGET_LAYER
 
-__all__ = ['run', 'build_document', 'validate_document']
+__all__ = ['build_document', 'run', 'validate_document']
 
 
 def run():

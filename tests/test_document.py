@@ -123,3 +123,17 @@ class TestValidateDocument:
         document['members'][0]['member_id'] = 120
         with pytest.raises(DocumentValidationError, match='member_id'):
             validate_document(document)
+
+    def test_rejects_non_json_serializable_value(self):
+        """スキーマ検証を通る位置 (未知キー) に非直列化オブジェクトが混入しても拒否する。"""
+        document = make_valid_document()
+        document['stories'][0]['_debug'] = object()
+        with pytest.raises(DocumentValidationError, match='JSON'):
+            validate_document(document)
+
+    def test_rejects_nan_value(self):
+        """NaN は JSON 仕様外なので拒否する。"""
+        document = make_valid_document()
+        document['members'][0]['elevation'] = float('nan')
+        with pytest.raises(DocumentValidationError, match='JSON'):
+            validate_document(document)

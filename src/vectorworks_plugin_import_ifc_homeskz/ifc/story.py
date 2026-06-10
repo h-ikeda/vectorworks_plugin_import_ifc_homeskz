@@ -29,17 +29,20 @@ def get_local_placement_z(element):
 def resolve_beam_top_offset(storey):
     """階に属する IfcColumn または IfcSlab から横架材天端の相対オフセット (FL からの負値) を求める。
 
-    IFC のローカル配置 Z 座標が負の柱・床版が見つかればその値を返す。
+    IFC のローカル配置 Z 座標が負の柱・床版のうち最小値（最も深いオフセット）を返す。
+    最初に見つかった値ではなく最小値を使うことで、IFC ファイル内の
+    エンティティ列挙順に依存しない決定的な結果になる。
     見つからなければ 0.0 を返す。
     """
+    offsets = []
     for rel in storey.ContainsElements or ():
         for element in rel.RelatedElements:
             if not (element.is_a('IfcColumn') or element.is_a('IfcSlab')):
                 continue
             z = get_local_placement_z(element)
             if z is not None and z < 0:
-                return z
-    return 0.0
+                offsets.append(z)
+    return min(offsets, default=0.0)
 
 
 def collect_stories(ifc_file):
