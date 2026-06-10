@@ -1,10 +1,12 @@
 """VectorWorks に登録するラッパースクリプト。
 
-実行のたびに GitHub 上の最新バージョンを確認し、新しいバージョンが公開
-されていれば pip で VectorWorks 設定フォルダ内の Python Externals
-フォルダへ更新インストールしてから、プラグイン本体を実行する。
-インターネットに接続できない等で更新を確認できない場合は、
-アップグレードをスキップしてインストール済みのバージョンを実行する。
+実行のたびに GitHub の main ブランチの最新コミットを確認し、インストール
+済みのコミットと異なれば pip で VectorWorks 設定フォルダ内の Python
+Externals フォルダへ更新インストールしてから、プラグイン本体を実行する。
+main ブランチは常にテスト済みのため、バージョン番号ではなくコミット SHA
+の一致で最新かどうかを判定する。インターネットに接続できない等で確認
+できない場合は、アップグレードをスキップしてインストール済みのバージョン
+を実行する。
 """
 
 from __future__ import annotations
@@ -19,10 +21,8 @@ import urllib.request
 PACKAGE_NAME = "vectorworks-plugin-import-ifc-homeskz"
 MODULE_NAME = "vectorworks_plugin_import_ifc_homeskz"
 REPOSITORY = "h-ikeda/vectorworks_plugin_import_ifc_homeskz"
-PYPROJECT_URL = (
-    f"https://raw.githubusercontent.com/{REPOSITORY}/main/pyproject.toml"
-)
-ARCHIVE_URL = f"https://github.com/{REPOSITORY}/archive/refs/heads/main.tar.gz"
+COMMITS_API_URL = f"https://api.github.com/repos/{REPOSITORY}/commits/main"
+ARCHIVE_URL_TEMPLATE = f"https://github.com/{REPOSITORY}/archive/{{sha}}.tar.gz"
 EXTERNALS_FOLDER_NAME = "Python Externals"
 # vs.GetFolderPath の負数はユーザフォルダ系を指し、-15 は設定フォルダ
 # (ユーザデータフォルダ) を返す
@@ -54,46 +54,44 @@ def _find_python_externals() -> str | None:
     return None
 
 
-def _installed_version() -> str | None:
-    """インストール済みパッケージのバージョンを返す。未導入なら None。"""
+def _installed_commit() -> str | None:
+    """インストール済みパッケージの取得元コミット SHA を返す。
+
+    pip が dist-info に記録する direct_url.json (PEP 610) のアーカイブ URL
+    から SHA を取り出す。ローカルフォルダからの手動インストール等で SHA
+    が記録されていない場合は None を返す (= 次回オンライン時に main の
+    最新コミットで再インストールされる)。
+    """
     try:
         from importlib import metadata
 
-        return metadata.version(PACKAGE_NAME)
+        text = metadata.distribution(PACKAGE_NAME).read_text("direct_url.json")
     except Exception:
         return None
-
-
-def _latest_version() -> str | None:
-    """GitHub 上の pyproject.toml から最新バージョンを取得する。
-
-    インターネットに接続できない等で取得に失敗した場合は None を返す。
-    """
-    try:
-        with urllib.request.urlopen(
-            PYPROJECT_URL, timeout=NETWORK_TIMEOUT_SECONDS
-        ) as response:
-            text = response.read().decode("utf-8")
-    except Exception:
+    if not text:
         return None
-    match = re.search(r'^version\s*=\s*"([^"]+)"', text, re.MULTILINE)
+    match = re.search(r"/archive/([0-9a-f]{40})\.tar\.gz", text)
     return match.group(1) if match else None
 
 
-def _parse_version(version: str) -> tuple[int, ...]:
-    """"1.2.3" 形式のバージョン文字列を比較可能な数値タプルへ変換する。"""
-    parts: list[int] = []
-    for part in version.split("."):
-        digits = re.match(r"\d+", part)
-        parts.append(int(digits.group()) if digits else 0)
-    return tuple(parts)
+def _latest_commit() -> str | None:
+    """GitHub API から main ブランチの最新コミット SHA を取得する。
 
-
-def _is_newer(latest: str, installed: str | None) -> bool:
-    """最新バージョンがインストール済みより新しいか判定する。"""
-    if installed is None:
-        return True
-    return _parse_version(latest) > _parse_version(installed)
+    インターネットに接続できない等で取得に失敗した場合は None を返す。
+    """
+    request = urllib.request.Request(
+        COMMITS_API_URL,
+        # SHA 文字列だけをプレーンテキストで受け取るメディアタイプ
+        headers={"Accept": "application/vnd.github.sha"},
+    )
+    try:
+        with urllib.request.urlopen(
+            request, timeout=NETWORK_TIMEOUT_SECONDS
+        ) as response:
+            sha = response.read().decode("utf-8").strip()
+    except Exception:
+        return None
+    return sha if re.fullmatch(r"[0-9a-f]{40}", sha) else None
 
 
 def _find_python_interpreter() -> str | None:
@@ -145,18 +143,30 @@ def _run_pip(args: list[str]) -> bool:
 
 
 def _upgrade_if_available() -> None:
-    """GitHub に新しいバージョンがあれば Python Externals へ更新する。
+    """main の最新コミットと異なるバージョンなら Python Externals へ更新する。
 
-    最新バージョンの確認に失敗した場合 (オフライン等) や Python
-    Externals フォルダを検出できない場合は何もしない。
+    最新コミットの確認に失敗した場合 (オフライン等) や Python Externals
+    フォルダを検出できない場合は何もしない。
     """
-    latest = _latest_version()
-    if latest is None or not _is_newer(latest, _installed_version()):
+    latest = _latest_commit()
+    if latest is None or latest == _installed_commit():
         return
     externals = _find_python_externals()
     if externals is None:
         return
-    if not _run_pip(["install", "--upgrade", "--target", externals, ARCHIVE_URL]):
+    archive_url = ARCHIVE_URL_TEMPLATE.format(sha=latest)
+    # コミットが変わってもバージョン番号は変わらないことがあるため、
+    # 同一バージョン扱いで pip がインストールをスキップしないよう
+    # --force-reinstall を付ける
+    pip_args = [
+        "install",
+        "--upgrade",
+        "--force-reinstall",
+        "--target",
+        externals,
+        archive_url,
+    ]
+    if not _run_pip(pip_args):
         return
     if externals not in sys.path:
         sys.path.insert(0, externals)
