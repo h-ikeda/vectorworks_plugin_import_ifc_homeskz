@@ -232,6 +232,9 @@ def _validate_story_bound(where: str, bound: Any) -> None:
     _require(isinstance(bound, dict), f'{where} は dict である必要があります')
     _require(isinstance(bound.get('story'), int) and not isinstance(bound.get('story'), bool),
              f'{where}.story は整数である必要があります')
+    # boundStory はスキーマ上 -1(下階)/0(当該階)/1(上階) のみ
+    _require(bound['story'] in (-1, 0, 1),
+             f'{where}.story は -1, 0, 1 のいずれかである必要があります')
     _require(isinstance(bound.get('level'), str) and bound['level'],
              f'{where}.level は非空文字列である必要があります')
     _require(_is_number(bound.get('offset')),

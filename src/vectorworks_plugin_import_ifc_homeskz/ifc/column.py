@@ -67,17 +67,16 @@ def _get_position_2d(
 
 def _base_level(
     index: int, top_idx: int, elevations: list[float], beam_offsets: list[float],
-) -> tuple[str, float, float]:
+) -> tuple[str, float]:
     """階 index の「基準レベル」(柱を配置するレイヤのレベル) を返す。
 
-    Returns: (level_type, base_offset, base_absolute)
+    Returns: (level_type, base_absolute)
         一般階は横架材天端 (FL からの負オフセット)、最上階は軒高 (オフセット 0)。
         base_absolute はそのレベルの絶対 Z (= storey_elevation + base_offset)。
     """
     if index == top_idx:
-        return LEVEL_EAVES, 0.0, elevations[index]
-    base_offset = beam_offsets[index]
-    return LEVEL_BEAM_TOP, base_offset, elevations[index] + base_offset
+        return LEVEL_EAVES, elevations[index]
+    return LEVEL_BEAM_TOP, elevations[index] + beam_offsets[index]
 
 
 def build_column_commands(ifc_file: ifcopenshell.file) -> list[ColumnCommand]:
@@ -116,7 +115,7 @@ def build_column_commands(ifc_file: ifcopenshell.file) -> list[ColumnCommand]:
         layer_name = f'{prefix}-{layer_suffix}'
 
         storey_elevation = elevations[i]
-        base_level_type, base_offset, base_abs = _base_level(
+        base_level_type, base_abs = _base_level(
             i, top_idx, elevations, beam_offsets)
 
         for rel in storey.ContainsElements or ():
