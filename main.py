@@ -486,6 +486,9 @@ def _upgrade_if_available() -> None:
         return
     latest = _latest_commit()
     if latest is None or latest == _installed_commit(externals):
+        # 更新は不要でも、import が別の場所の同名パッケージを拾わないよう
+        # sys.path の優先順位だけは毎回整える (キャッシュは破棄しない)
+        _prioritize_externals(externals)
         return
     fresh = not _is_installed(externals)
     if _install_package_from_archive(externals, latest) is not None:
@@ -498,16 +501,25 @@ def _upgrade_if_available() -> None:
     _activate_externals(externals)
 
 
-def _activate_externals(externals: str) -> None:
-    """インストール直後の Python Externals を確実に参照させる。
+def _prioritize_externals(externals: str) -> None:
+    """Python Externals を sys.path の先頭へ移動する。
 
-    sys.path の後方や別の場所にある旧版より優先されるよう Python
-    Externals を sys.path の先頭へ移動し、キャッシュ済みモジュールを
-    破棄する。
+    更新判定は Python Externals 内のパッケージを基準にしているため、
+    実行時の import でも sys.path の後方や別の場所にある同名パッケージ
+    より Python Externals が優先されるようにする。
     """
     if externals in sys.path:
         sys.path.remove(externals)
     sys.path.insert(0, externals)
+
+
+def _activate_externals(externals: str) -> None:
+    """インストール直後の Python Externals を確実に参照させる。
+
+    sys.path の優先順位を整えたうえで、キャッシュ済みの旧バージョンの
+    モジュールを破棄する。
+    """
+    _prioritize_externals(externals)
     _purge_cached_modules(externals)
     importlib.invalidate_caches()
 
