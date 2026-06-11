@@ -1,8 +1,11 @@
 """VectorWorks に登録するラッパースクリプト。
 
 実行のたびに GitHub の main ブランチの最新コミットを確認し、インストール
-済みのコミットと異なれば pip で VectorWorks 設定フォルダ内の Python
-Externals フォルダへ更新インストールしてから、プラグイン本体を実行する。
+済みのコミットと異なれば VectorWorks 設定フォルダ内の Python Externals
+フォルダへ更新インストールしてから、プラグイン本体を実行する。
+本体パッケージは純 Python のためアーカイブの直接展開でインストールし
+(VectorWorks 同梱の Python では pip を実行できない場合があるため pip に
+依存しない)、ifcopenshell 等の依存ライブラリだけを pip で揃える。
 パッケージが未インストールの場合 (初回起動時) は依存ライブラリも含めて
 自動的に新規インストールする。
 main ブランチは常にテスト済みのため、バージョン番号ではなくコミット SHA
@@ -15,15 +18,23 @@ from __future__ import annotations
 
 import glob
 import importlib
+import io
+import json
 import os
 import re
+import shutil
 import ssl
 import subprocess
 import sys
+import tarfile
+import tempfile
 import urllib.request
 
 PACKAGE_NAME = "vectorworks-plugin-import-ifc-homeskz"
 MODULE_NAME = "vectorworks_plugin_import_ifc_homeskz"
+# pip でインストールする依存ライブラリ (pyproject.toml の dependencies と
+# 同期させること)
+DEPENDENCIES = ("ifcopenshell", "certifi")
 REPOSITORY = "h-ikeda/vectorworks_plugin_import_ifc_homeskz"
 # GitHub REST API は匿名アクセスのレートリミットが厳しいため、制限のない
 # git smart HTTP プロトコルの参照広告エンドポイントから SHA を取得する
@@ -105,36 +116,45 @@ def _installed_commit(externals: str) -> str | None:
 _last_network_error: list[str] = []
 
 
-def _ssl_context() -> ssl.SSLContext:
-    """HTTPS 用の SSL コンテキストを作る。
+def _ssl_contexts() -> list[ssl.SSLContext]:
+    """HTTPS 用の SSL コンテキストの候補を順に返す。
 
-    VectorWorks 同梱の Python には CA 証明書バンドルが含まれず既定の
-    証明書検証が失敗することがあるため、利用可能なら certifi (本
-    パッケージの依存として Python Externals に入る)、無ければ pip
-    同梱の CA バンドルを使う。
+    システムの証明書設定に従う既定のコンテキストを優先しつつ、
+    VectorWorks 同梱の Python に CA 証明書バンドルが含まれない場合に
+    備えて、certifi (本パッケージの依存として Python Externals に入る)
+    や pip 同梱の CA バンドルを使うコンテキストも候補に加える。
     """
+    contexts: list[ssl.SSLContext] = []
+    try:
+        contexts.append(ssl.create_default_context())
+    except Exception:
+        pass
     for module_name in ("certifi", "pip._vendor.certifi"):
         try:
             certifi = importlib.import_module(module_name)
-            return ssl.create_default_context(cafile=certifi.where())
+            contexts.append(ssl.create_default_context(cafile=certifi.where()))
         except Exception:
             continue
-    return ssl.create_default_context()
+    return contexts
 
 
 def _fetch(url: str) -> bytes | None:
-    """URL の内容を取得する。失敗時は理由を記録して None を返す。"""
+    """URL の内容を取得する。失敗時は理由を記録して None を返す。
+
+    証明書検証の失敗に備えて、SSL コンテキストの候補を順に試す。
+    """
     request = urllib.request.Request(
         url, headers={"User-Agent": PACKAGE_NAME}
     )
-    try:
-        with urllib.request.urlopen(
-            request, timeout=NETWORK_TIMEOUT_SECONDS, context=_ssl_context()
-        ) as response:
-            return bytes(response.read())
-    except Exception as error:
-        _last_network_error.append(f"{type(error).__name__}: {error}")
-        return None
+    for context in _ssl_contexts():
+        try:
+            with urllib.request.urlopen(
+                request, timeout=NETWORK_TIMEOUT_SECONDS, context=context
+            ) as response:
+                return bytes(response.read())
+        except Exception as error:
+            _last_network_error.append(f"{type(error).__name__}: {error}")
+    return None
 
 
 def _latest_commit() -> str | None:
@@ -172,17 +192,20 @@ def _subprocess_env() -> dict[str, str]:
 
 
 def _is_python_interpreter(candidate: str) -> bool:
-    """候補の実行ファイルが Python インタプリタとして応答するか確認する。
+    """候補の実行ファイルが pip 実行に使える Python か確認する。
 
     VectorWorks 内で見つかるパスを盲目的に pip 実行に使うと
     VectorWorks 本体の多重起動を招き得るため、短いタイムアウトで
-    sys.executable の名前を print させ、Python として応答しない
-    プロセスは kill して棄却する。
+    sys.executable の名前とバージョンを print させ、Python として
+    応答しないプロセスは kill して棄却する。インストールされる
+    ifcopenshell 等のバイナリ wheel が VectorWorks 内蔵 Python で
+    使えるよう、バージョン (major.minor) の一致も要求する。
     """
     sentinel = "vw-plugin-python-probe"
     code = (
         "import os.path, sys; "
-        f"print('{sentinel}', os.path.basename(sys.executable))"
+        f"print('{sentinel}', os.path.basename(sys.executable), "
+        "'.'.join(map(str, sys.version_info[:2])))"
     )
     try:
         completed = subprocess.run(
@@ -199,8 +222,11 @@ def _is_python_interpreter(candidate: str) -> bool:
     if completed.returncode != 0:
         return False
     output = completed.stdout.decode("utf-8", errors="replace")
-    match = re.search(sentinel + r" (\S+)", output)
-    return match is not None and match.group(1).lower().startswith("python")
+    match = re.search(sentinel + r" (\S+) (\S+)", output)
+    if match is None or not match.group(1).lower().startswith("python"):
+        return False
+    expected_version = ".".join(map(str, sys.version_info[:2]))
+    return match.group(2) == expected_version
 
 
 # 確認済みインタプリタのキャッシュ (確認の二重実行を避けるため)
@@ -208,11 +234,12 @@ _interpreter_cache: list[str | None] = []
 
 
 def _find_python_interpreter() -> str | None:
-    """VectorWorks 同梱の Python インタプリタ実行ファイルを探す。
+    """pip 実行に使える Python インタプリタ実行ファイルを探す。
 
     VectorWorks 内蔵 Python では sys.executable が VectorWorks 本体を指す
-    ことがあるため、sys.prefix 系のパスから候補を集め、実際に Python
-    として応答することを確認できたものだけを返す。
+    ことがあるため、同梱 Python (sys.prefix 系) とシステムの Python から
+    候補を集め、実際に Python として応答しバージョンが一致することを
+    確認できたものだけを返す。
     """
     if _interpreter_cache:
         return _interpreter_cache[0]
@@ -226,11 +253,21 @@ def _find_python_interpreter() -> str | None:
             os.path.join("bin", "python3"),
             os.path.join("bin", "python"),
         ):
-            candidate = os.path.join(prefix, relative)
-            if os.path.isfile(candidate):
-                candidates.append(candidate)
+            candidates.append(os.path.join(prefix, relative))
+    # VectorWorks 同梱の Python に単体起動できる実体が無い場合に備えて
+    # システムの Python も候補にする (バージョン一致は probe で確認する)
+    for name in ("python3", "python"):
+        found = shutil.which(name)
+        if found:
+            candidates.append(found)
+    # macOS 標準の Python (GUI アプリの PATH に含まれない場合に備える)
+    candidates.append("/usr/bin/python3")
     result: str | None = None
+    seen: set[str] = set()
     for candidate in candidates:
+        if candidate in seen or not os.path.isfile(candidate):
+            continue
+        seen.add(candidate)
         if _is_python_interpreter(candidate):
             result = candidate
             break
@@ -307,6 +344,116 @@ def _run_pip(args: list[str]) -> bool:
     return bool(pip_main(args) == 0)
 
 
+def _extract_package(archive: tarfile.TarFile, destination: str) -> None:
+    """tarball 内の src/<パッケージ> 配下のファイルを destination へ展開する。"""
+    marker = f"/src/{MODULE_NAME}/"
+    for member in archive.getmembers():
+        if not member.isfile():
+            continue
+        index = member.name.find(marker)
+        if index < 0:
+            continue
+        relative = member.name[index + len("/src/"):]
+        parts = relative.split("/")
+        # パストラバーサルを防ぐ
+        if any(part in ("", "..") for part in parts):
+            continue
+        target = os.path.join(destination, *parts)
+        os.makedirs(os.path.dirname(target), exist_ok=True)
+        source = archive.extractfile(member)
+        if source is None:
+            continue
+        with source, open(target, "wb") as stream:
+            shutil.copyfileobj(source, stream)
+
+
+def _replace_package_dir(externals: str, staged: str) -> None:
+    """展開済みの新しい本体パッケージで Python Externals 内を置き換える。
+
+    旧バージョンをリネームして退避してからコピーし、失敗した場合は
+    旧バージョンへ戻す。
+    """
+    target = os.path.join(externals, MODULE_NAME)
+    backup = target + ".old"
+    if os.path.isdir(backup):
+        shutil.rmtree(backup)
+    if os.path.isdir(target):
+        os.rename(target, backup)
+    try:
+        shutil.copytree(staged, target)
+    except Exception:
+        shutil.rmtree(target, ignore_errors=True)
+        if os.path.isdir(backup):
+            os.rename(backup, target)
+        raise
+    shutil.rmtree(backup, ignore_errors=True)
+
+
+def _write_dist_info(externals: str, archive_url: str) -> None:
+    """インストール元 (コミット SHA 入り URL) を dist-info に記録する。
+
+    pip が記録する direct_url.json (PEP 610) と同じ場所・形式にして、
+    _installed_commit() が pip でのインストールと区別なく読めるように
+    する。既存の dist-info は古い情報のため置き換える。
+    """
+    pattern = os.path.join(externals, f"{MODULE_NAME}-*.dist-info")
+    for stale in glob.glob(pattern):
+        shutil.rmtree(stale, ignore_errors=True)
+    dist_info = os.path.join(externals, f"{MODULE_NAME}-0.0.0.dist-info")
+    os.makedirs(dist_info, exist_ok=True)
+    metadata = (
+        "Metadata-Version: 2.1\n"
+        f"Name: {PACKAGE_NAME}\n"
+        "Version: 0.0.0\n"
+    )
+    with open(
+        os.path.join(dist_info, "METADATA"), "w", encoding="utf-8"
+    ) as stream:
+        stream.write(metadata)
+    with open(
+        os.path.join(dist_info, "direct_url.json"), "w", encoding="utf-8"
+    ) as stream:
+        json.dump({"url": archive_url, "archive_info": {}}, stream)
+    with open(
+        os.path.join(dist_info, "INSTALLER"), "w", encoding="utf-8"
+    ) as stream:
+        stream.write("main.py\n")
+
+
+def _install_package_from_archive(externals: str, sha: str) -> str | None:
+    """本体パッケージをアーカイブの直接展開でインストールする。
+
+    本体は純 Python のためビルド不要で、tarball 内の src/<パッケージ> を
+    Python Externals へ展開するだけでよい。VectorWorks 同梱の Python では
+    pip を実行できる環境が無い場合があるため、本体のインストール・更新は
+    pip に依存しない。成功時は None、失敗時は理由のメッセージを返す。
+    """
+    archive_url = ARCHIVE_URL_TEMPLATE.format(sha=sha)
+    data = _fetch(archive_url)
+    if data is None:
+        detail = _last_network_error[-1] if _last_network_error else ""
+        return "本体パッケージのダウンロードに失敗しました。\n" + detail
+    try:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            with tarfile.open(fileobj=io.BytesIO(data), mode="r:gz") as archive:
+                _extract_package(archive, temp_dir)
+            staged = os.path.join(temp_dir, MODULE_NAME)
+            if not os.path.isdir(staged):
+                return "アーカイブに本体パッケージが見つかりませんでした。"
+            _replace_package_dir(externals, staged)
+    except Exception as error:
+        return f"本体パッケージの展開に失敗しました: {error}"
+    _write_dist_info(externals, archive_url)
+    return None
+
+
+def _install_dependencies(externals: str) -> bool:
+    """依存ライブラリを pip で Python Externals へインストールする。"""
+    return _run_pip(
+        ["install", "--upgrade", "--target", externals, *DEPENDENCIES]
+    )
+
+
 def _purge_cached_modules(externals: str) -> None:
     """Python Externals 由来のキャッシュ済みモジュールを破棄する。
 
@@ -329,8 +476,10 @@ def _purge_cached_modules(externals: str) -> None:
 def _upgrade_if_available() -> None:
     """main の最新コミットと異なるバージョンなら Python Externals へ更新する。
 
-    最新コミットの確認に失敗した場合 (オフライン等) や Python Externals
-    フォルダを検出できない場合は何もしない。
+    本体パッケージはアーカイブの直接展開で入れ替える (pip 不要)。
+    未インストール (初回起動・手動削除後) の場合は依存ライブラリも pip で
+    揃える。最新コミットの確認に失敗した場合 (オフライン等) や Python
+    Externals フォルダを検出できない場合は何もしない。
     """
     externals = _find_python_externals()
     if externals is None:
@@ -338,32 +487,14 @@ def _upgrade_if_available() -> None:
     latest = _latest_commit()
     if latest is None or latest == _installed_commit(externals):
         return
-    archive_url = ARCHIVE_URL_TEMPLATE.format(sha=latest)
-    if _is_installed(externals):
-        # pip は --target の既存内容を「インストール済み」とみなさず依存も
-        # 毎回コピーし直すため、更新は --no-deps で本体だけ入れ替える。
-        # ifcopenshell 等の大きな依存を毎回書き換えると、遅いフォルダ
-        # (iCloud 同期下の設定フォルダ等) でタイムアウト kill による
-        # 部分書き込みが残るリスクがある。依存の不足・破損は import 失敗時
-        # に _repair_install() が依存ごと再インストールして補う。
-        pip_args = [
-            "install",
-            "--upgrade",
-            # コミットが変わってもバージョン番号は変わらないことがある
-            # ため、同一バージョン扱いでスキップされないよう強制再
-            # インストールする
-            "--force-reinstall",
-            "--no-deps",
-            "--target",
-            externals,
-            archive_url,
-        ]
-    else:
-        # 未インストール (初回起動・手動削除後) の場合は依存ライブラリ
-        # (ifcopenshell 等) も含めて新規インストールする
-        pip_args = ["install", "--upgrade", "--target", externals, archive_url]
-    if not _run_pip(pip_args):
+    fresh = not _is_installed(externals)
+    if _install_package_from_archive(externals, latest) is not None:
         return
+    if fresh:
+        # 初回は依存ライブラリも揃える。失敗しても本体は入っているため、
+        # import 失敗を経て _repair_install() が改めて試み、それでも
+        # ダメなら理由をダイアログで表示する
+        _install_dependencies(externals)
     _activate_externals(externals)
 
 
@@ -382,12 +513,12 @@ def _activate_externals(externals: str) -> None:
 
 
 def _repair_install() -> str | None:
-    """破損したインストールを依存ごと強制再インストールして復旧する。
+    """破損したインストールを丸ごと入れ直して復旧する。
 
-    タイムアウト kill 等で部分的に書き込まれたパッケージが Python
-    Externals に残ると import が失敗し続けるため、main の最新コミットを
-    依存ライブラリも含めてクリーンに入れ直す。復旧できた場合は None、
-    できない場合は理由のメッセージを返す。
+    部分的に書き込まれたパッケージが Python Externals に残ると import が
+    失敗し続けるため、main の最新コミットの本体を展開し直し、依存
+    ライブラリも pip で入れ直す。復旧できた場合は None、できない場合は
+    理由のメッセージを返す。
     """
     externals = _find_python_externals()
     if externals is None:
@@ -399,18 +530,20 @@ def _repair_install() -> str | None:
             "GitHub から最新コミットを取得できませんでした"
             " (インターネット接続を確認してください)。\n" + detail
         )
-    archive_url = ARCHIVE_URL_TEMPLATE.format(sha=latest)
-    pip_args = [
-        "install",
-        "--upgrade",
-        "--force-reinstall",
-        "--target",
-        externals,
-        archive_url,
-    ]
-    if not _run_pip(pip_args):
+    failure = _install_package_from_archive(externals, latest)
+    if failure is not None:
+        return failure
+    if not _install_dependencies(externals):
         detail = _last_subprocess_output[-1] if _last_subprocess_output else ""
-        return "pip による再インストールに失敗しました。\n" + detail
+        command = (
+            f'python3 -m pip install --upgrade --target "{externals}" '
+            + " ".join(DEPENDENCIES)
+        )
+        return (
+            "依存ライブラリを自動インストールできませんでした。"
+            "ターミナルで以下を実行してください:\n"
+            f"{command}\n" + detail
+        )
     _activate_externals(externals)
     return None
 

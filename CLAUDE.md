@@ -43,7 +43,7 @@ src/
             grid.py           # grid 命令 → GridAxis オブジェクト
             story.py          # story 命令 → ストーリ・レベル・レイヤ
             member.py         # member 命令 → 構造材オブジェクト
-main.py                      # VectorWorks から呼び出すラッパースクリプト (実行時に pip 自動更新)
+main.py                      # VectorWorks から呼び出すラッパースクリプト (実行時に自動インストール・更新)
 tests/                       # pytest 用テスト (CI は vs.py スタブを GitHub からダウンロード)
 pyproject.toml               # パッケージメタデータ
 ```
