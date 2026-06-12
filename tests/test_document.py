@@ -43,7 +43,8 @@ def make_valid_document() -> dict[str, Any]:
             {
                 'layer': '1-横架材天端', 'member_id': '120×180 - 杉',
                 'start': [0.0, 0.0], 'end': [3000.0, 0.0],
-                'width': 120.0, 'height': 180.0, 'elevation': 425.0,
+                'width': 120.0, 'height': 180.0,
+                'elevation': 425.0, 'end_elevation': 425.0,
             },
         ],
         'columns': [
@@ -130,6 +131,12 @@ class TestValidateDocument:
         document = make_valid_document()
         del document['members'][0]['width']
         with pytest.raises(DocumentValidationError, match='width'):
+            validate_document(document)
+
+    def test_rejects_member_without_end_elevation(self) -> None:
+        document = make_valid_document()
+        del document['members'][0]['end_elevation']
+        with pytest.raises(DocumentValidationError, match='end_elevation'):
             validate_document(document)
 
     def test_rejects_member_with_non_string_id(self) -> None:

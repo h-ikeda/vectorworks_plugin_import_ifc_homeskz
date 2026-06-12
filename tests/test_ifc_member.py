@@ -11,7 +11,7 @@ import pytest
 from vectorworks_plugin_import_ifc_homeskz.document import MemberCommand
 from vectorworks_plugin_import_ifc_homeskz.ifc.member import (
     _get_material_name,
-    _get_placement_2d,
+    _get_placement_3d,
     _get_profile_dims,
     build_member_commands,
     make_member_id,
@@ -31,7 +31,8 @@ def make_storey(ifc: ifcopenshell.file, name: str, elevation: float) -> ifcopens
 def make_beam(ifc: ifcopenshell.file, storey: ifcopenshell.entity_instance,
               ox: float, oy: float, dx: float = 1.0, dy: float = 0.0,
               width: float = 120.0, height: float = 180.0, length: float = 3000.0,
-              material_name: str = '', oz: float = 0.0) -> ifcopenshell.entity_instance:
+              material_name: str = '', oz: float = 0.0,
+              dz: float = 0.0) -> ifcopenshell.entity_instance:
     """テスト用 IfcBeam を生成して storey に追加する。
 
     Parameters
@@ -42,10 +43,11 @@ def make_beam(ifc: ifcopenshell.file, storey: ifcopenshell.entity_instance,
     height   : IfcRectangleProfileDef.YDim (背, mm)
     length   : IfcExtrudedAreaSolid.Depth (長さ, mm)
     oz       : ビームのローカル配置 Z 座標 (mm, ストーリ FL からの相対)
+    dz       : ビーム軸方向の Z 成分（登り梁・隅木等の傾斜梁用）
     """
     # 配置（梁の延伸方向 = ローカル Z = Axis 属性）
     pt = ifc.create_entity('IfcCartesianPoint', Coordinates=[ox, oy, oz])
-    axis = ifc.create_entity('IfcDirection', DirectionRatios=[dx, dy, 0.0])
+    axis = ifc.create_entity('IfcDirection', DirectionRatios=[dx, dy, dz])
     placement_3d = ifc.create_entity('IfcAxis2Placement3D', Location=pt, Axis=axis)
     local_placement = ifc.create_entity('IfcLocalPlacement', RelativePlacement=placement_3d)
 
@@ -101,22 +103,34 @@ def make_grid_axis(ifc: ifcopenshell.file, name: str,
 
 
 # ---------------------------------------------------------------------------
-# _get_placement_2d
+# _get_placement_3d
 # ---------------------------------------------------------------------------
 
-class TestGetPlacement2D:
+class TestGetPlacement3D:
     def test_extracts_origin(self) -> None:
         ifc = ifcopenshell.file()
-        pt = ifc.create_entity('IfcCartesianPoint', Coordinates=[1000.0, 2000.0, 0.0])
+        pt = ifc.create_entity('IfcCartesianPoint', Coordinates=[1000.0, 2000.0, -48.0])
         ap = ifc.create_entity('IfcAxis2Placement3D', Location=pt)
         lp = ifc.create_entity('IfcLocalPlacement', RelativePlacement=ap)
         beam = ifc.create_entity('IfcBeam', ObjectPlacement=lp)
 
-        result = _get_placement_2d(beam)
+        result = _get_placement_3d(beam)
         assert result is not None
-        ox, oy, dx, dy = result
+        ox, oy, oz, ax, ay, az = result
         assert ox == pytest.approx(1000.0)
         assert oy == pytest.approx(2000.0)
+        assert oz == pytest.approx(-48.0)
+
+    def test_returns_none_z_when_coordinates_2d(self) -> None:
+        ifc = ifcopenshell.file()
+        pt = ifc.create_entity('IfcCartesianPoint', Coordinates=[1000.0, 2000.0])
+        ap = ifc.create_entity('IfcAxis2Placement3D', Location=pt)
+        lp = ifc.create_entity('IfcLocalPlacement', RelativePlacement=ap)
+        beam = ifc.create_entity('IfcBeam', ObjectPlacement=lp)
+
+        result = _get_placement_3d(beam)
+        assert result is not None
+        assert result[2] is None
 
     def test_defaults_direction_to_x_axis_when_no_axis(self) -> None:
         ifc = ifcopenshell.file()
@@ -125,11 +139,10 @@ class TestGetPlacement2D:
         lp = ifc.create_entity('IfcLocalPlacement', RelativePlacement=ap)
         beam = ifc.create_entity('IfcBeam', ObjectPlacement=lp)
 
-        result = _get_placement_2d(beam)
+        result = _get_placement_3d(beam)
         assert result is not None
-        ox, oy, dx, dy = result
-        assert dx == pytest.approx(1.0)
-        assert dy == pytest.approx(0.0)
+        ox, oy, oz, ax, ay, az = result
+        assert (ax, ay, az) == (pytest.approx(1.0), pytest.approx(0.0), pytest.approx(0.0))
 
     def test_extracts_axis_direction(self) -> None:
         ifc = ifcopenshell.file()
@@ -139,37 +152,54 @@ class TestGetPlacement2D:
         lp = ifc.create_entity('IfcLocalPlacement', RelativePlacement=ap)
         beam = ifc.create_entity('IfcBeam', ObjectPlacement=lp)
 
-        result = _get_placement_2d(beam)
+        result = _get_placement_3d(beam)
         assert result is not None
-        ox, oy, dx, dy = result
-        assert dx == pytest.approx(0.0)
-        assert dy == pytest.approx(1.0)
+        ox, oy, oz, ax, ay, az = result
+        assert ax == pytest.approx(0.0)
+        assert ay == pytest.approx(1.0)
+        assert az == pytest.approx(0.0)
+
+    def test_extracts_sloped_axis_z_component(self) -> None:
+        """傾斜梁（隅木・登り梁等）の Axis Z 成分を保持する。"""
+        ifc = ifcopenshell.file()
+        pt = ifc.create_entity('IfcCartesianPoint', Coordinates=[0.0, 0.0, 0.0])
+        axis = ifc.create_entity('IfcDirection', DirectionRatios=[0.6, 0.0, 0.8])
+        ap = ifc.create_entity('IfcAxis2Placement3D', Location=pt, Axis=axis)
+        lp = ifc.create_entity('IfcLocalPlacement', RelativePlacement=ap)
+        beam = ifc.create_entity('IfcBeam', ObjectPlacement=lp)
+
+        result = _get_placement_3d(beam)
+        assert result is not None
+        ox, oy, oz, ax, ay, az = result
+        assert ax == pytest.approx(0.6)
+        assert ay == pytest.approx(0.0)
+        assert az == pytest.approx(0.8)
 
     def test_normalizes_direction(self) -> None:
         ifc = ifcopenshell.file()
         pt = ifc.create_entity('IfcCartesianPoint', Coordinates=[0.0, 0.0, 0.0])
         # 長さ 2 のベクトル
-        axis = ifc.create_entity('IfcDirection', DirectionRatios=[2.0, 0.0, 0.0])
+        axis = ifc.create_entity('IfcDirection', DirectionRatios=[2.0, 0.0, 2.0])
         ap = ifc.create_entity('IfcAxis2Placement3D', Location=pt, Axis=axis)
         lp = ifc.create_entity('IfcLocalPlacement', RelativePlacement=ap)
         beam = ifc.create_entity('IfcBeam', ObjectPlacement=lp)
 
-        result = _get_placement_2d(beam)
+        result = _get_placement_3d(beam)
         assert result is not None
-        ox, oy, dx, dy = result
-        assert math.hypot(dx, dy) == pytest.approx(1.0)
+        ox, oy, oz, ax, ay, az = result
+        assert math.sqrt(ax * ax + ay * ay + az * az) == pytest.approx(1.0)
 
     def test_returns_none_when_no_placement(self) -> None:
         elem = MagicMock()
         elem.ObjectPlacement = None
-        assert _get_placement_2d(elem) is None
+        assert _get_placement_3d(elem) is None
 
     def test_returns_none_for_non_local_placement(self) -> None:
         placement = MagicMock()
         placement.is_a = lambda t: False
         elem = MagicMock()
         elem.ObjectPlacement = placement
-        assert _get_placement_2d(elem) is None
+        assert _get_placement_3d(elem) is None
 
 
 # ---------------------------------------------------------------------------
@@ -323,8 +353,9 @@ class TestBuildMemberCommands:
         commands = build_member_commands(ifc)
         assert len(commands) == 1
         assert commands[0]['layer'] == 'R-軒高'
-        # 最上階の配置高さはストーリ高さそのもの
-        assert commands[0]['elevation'] == pytest.approx(5973.0)
+        # 配置高さは天端 = ストーリ高さ + ローカル Z(0) + 背/2 (断面中心 → 天端補正)
+        assert commands[0]['elevation'] == pytest.approx(5973.0 + 90.0)
+        assert commands[0]['end_elevation'] == pytest.approx(5973.0 + 90.0)
 
     def test_assigns_layer_per_story(self) -> None:
         ifc = ifcopenshell.file()
@@ -355,20 +386,37 @@ class TestBuildMemberCommands:
         command = commands[0]
         assert command['start'] == [pytest.approx(500.0), pytest.approx(500.0)]
         assert command['end'] == [pytest.approx(1100.0), pytest.approx(500.0)]
-        # layer_elevation = storey.Elevation + resolve_beam_top_offset = 473 + 0 = 473
-        assert command['elevation'] == pytest.approx(473.0)
+        # 天端 = ストーリ高さ 473 + ローカル Z(0) + 背 180 の半分
+        assert command['elevation'] == pytest.approx(563.0)
 
     def test_uses_beam_local_z_for_elevation(self) -> None:
-        """各横架材は自身のローカル配置 Z で絶対高さに描画される。"""
+        """各横架材は自身のローカル配置 Z（断面中心）から天端高さに描画される。"""
         ifc = ifcopenshell.file()
         storey = make_storey(ifc, '1FL', 473.0)
         make_storey(ifc, 'RFL', 5973.0)
-        # ローカル Z = -250 の梁: 絶対高さ = 473 + (-250) = 223
+        # ローカル Z = -250 (断面中心), 背 180: 天端 = 473 - 250 + 90 = 313
         make_beam(ifc, storey, 0.0, 0.0, oz=-250.0)
 
         commands = build_member_commands(ifc)
         assert len(commands) == 1
-        assert commands[0]['elevation'] == pytest.approx(223.0)
+        assert commands[0]['elevation'] == pytest.approx(313.0)
+
+    def test_elevation_is_section_top_not_center(self) -> None:
+        """ホームズ君 IFC の配置 Z は断面中心なので、背/2 を足した天端を格納する。
+
+        構造材ツールの断面基準点（左右中央・上端）にそのまま渡せる値にするため。
+        """
+        ifc = ifcopenshell.file()
+        storey = make_storey(ifc, '1FL', 473.0)
+        make_storey(ifc, 'RFL', 5973.0)
+        # 実データと同じ関係: 背 105 の梁が天端 -5 にある場合、中心 Z = -57.5
+        make_beam(ifc, storey, 0.0, 0.0, height=105.0, oz=-57.5)
+
+        commands = build_member_commands(ifc)
+        assert len(commands) == 1
+        # 天端 = 473 + (-57.5) + 105/2 = 468
+        assert commands[0]['elevation'] == pytest.approx(468.0)
+        assert commands[0]['end_elevation'] == pytest.approx(468.0)
 
     def test_beams_at_different_heights_get_distinct_elevations(self) -> None:
         """基準高さにない横架材も含め、各梁が固有の高さに配置される。"""
@@ -379,8 +427,42 @@ class TestBuildMemberCommands:
         make_beam(ifc, storey, 0.0, 1000.0, oz=-300.0)
 
         elevations = sorted(c['elevation'] for c in build_member_commands(ifc))
-        assert elevations[0] == pytest.approx(173.0)   # 473 - 300
-        assert elevations[1] == pytest.approx(425.0)   # 473 - 48
+        assert elevations[0] == pytest.approx(263.0)   # 473 - 300 + 90
+        assert elevations[1] == pytest.approx(515.0)   # 473 - 48 + 90
+
+    def test_sloped_beam_keeps_slope_and_plan_projection(self) -> None:
+        """傾斜梁（登り梁・隅木等）は始端・終端の天端 Z が異なる傾斜した命令になる。
+
+        平面座標は軸の XY 成分 × 全長（平面投影長）で求め、
+        天端中央線は断面中心線を軸直交方向に背/2 持ち上げた位置になる。
+        """
+        ifc = ifcopenshell.file()
+        storey = make_storey(ifc, '1FL', 473.0)
+        make_storey(ifc, 'RFL', 5973.0)
+        # 軸 (0.6, 0, 0.8), 全長 1000, 背 180
+        make_beam(ifc, storey, 0.0, 0.0, dx=0.6, dy=0.0, dz=0.8,
+                  height=180.0, length=1000.0)
+
+        commands = build_member_commands(ifc)
+        assert len(commands) == 1
+        command = commands[0]
+        # 軸直交・上向きの単位ベクトル n = (-0.8, 0, 0.6), 背/2 = 90
+        # → 断面中心線から (-72, 0, +54) ずらした天端中央線
+        assert command['start'] == [pytest.approx(-72.0), pytest.approx(0.0)]
+        # 平面投影長 = 0.6 × 1000 = 600
+        assert command['end'] == [pytest.approx(528.0), pytest.approx(0.0)]
+        # 始端天端 = 473 + 0 + 54 = 527, 終端は 0.8 × 1000 = 800 上がる
+        assert command['elevation'] == pytest.approx(527.0)
+        assert command['end_elevation'] == pytest.approx(1327.0)
+
+    def test_skips_vertical_axis_member(self) -> None:
+        """軸が鉛直な材（横架材でない）は命令を生成しない。"""
+        ifc = ifcopenshell.file()
+        storey = make_storey(ifc, '1FL', 473.0)
+        make_storey(ifc, 'RFL', 5973.0)
+        make_beam(ifc, storey, 0.0, 0.0, dx=0.0, dy=0.0, dz=1.0)
+
+        assert build_member_commands(ifc) == []
 
     def test_falls_back_to_layer_elevation_when_local_z_unavailable(self) -> None:
         """ローカル Z を取得できない梁はレイヤ基準高さ（横架材天端）にフォールバックする。
@@ -410,8 +492,10 @@ class TestBuildMemberCommands:
         commands = build_member_commands(ifc)
         member_cmds = [c for c in commands if c['member_id'] == '120×180']
         assert len(member_cmds) == 1
-        # layer_elevation = 473 + (-50) = 423（ストーリ高さ 473 ではない）
+        # layer_elevation = 473 + (-50) = 423（ストーリ高さ 473 ではない）。
+        # レイヤ基準高さは既に天端なので背/2 の補正は掛からない
         assert member_cmds[0]['elevation'] == pytest.approx(423.0)
+        assert member_cmds[0]['end_elevation'] == pytest.approx(423.0)
 
     def test_sets_member_id_and_dimensions(self) -> None:
         ifc = ifcopenshell.file()
@@ -475,11 +559,13 @@ class TestBuildMemberCommands:
 
 def _member(start: list[float], end: list[float], width: float = 120.0,
             height: float = 180.0, elevation: float = 473.0,
-            layer: str = '1-横架材天端', member_id: str = 'm') -> MemberCommand:
+            layer: str = '1-横架材天端', member_id: str = 'm',
+            end_elevation: float | None = None) -> MemberCommand:
     return {
         'layer': layer, 'member_id': member_id,
         'start': start, 'end': end,
         'width': width, 'height': height, 'elevation': elevation,
+        'end_elevation': elevation if end_elevation is None else end_elevation,
     }
 
 
@@ -564,6 +650,26 @@ class TestResolveMemberInterferences:
         result = resolve_member_interferences([a, b])
         assert result[0]['start'] == [pytest.approx(0.0), pytest.approx(0.0)]
         assert result[1]['start'] == [pytest.approx(0.0), pytest.approx(0.0)]
+
+    def test_sloped_member_not_trimmed(self) -> None:
+        """傾斜梁（両端の天端 Z が異なる材）は詰める側にも相手側にもしない。"""
+        primary = _member([0.0, -1000.0], [0.0, 1000.0], member_id='primary')
+        # 通し材に食い込む登り梁: 高さが一定でないため詰めない
+        sloped = _member([600.0, 500.0], [0.0, 500.0], width=105.0,
+                         elevation=473.0, end_elevation=973.0, member_id='sloped')
+        result = resolve_member_interferences([primary, sloped])
+        s = next(c for c in result if c['member_id'] == 'sloped')
+        assert s['end'] == [pytest.approx(0.0), pytest.approx(500.0)]
+        assert s['end_elevation'] == pytest.approx(973.0)
+
+    def test_member_butting_sloped_member_not_trimmed(self) -> None:
+        """傾斜梁を相手とする食い込みも調整しない（水平面内の矩形モデル外）。"""
+        sloped = _member([0.0, -1000.0], [0.0, 1000.0],
+                         elevation=473.0, end_elevation=1473.0, member_id='sloped')
+        butting = _member([600.0, 500.0], [0.0, 500.0], width=105.0, member_id='butting')
+        result = resolve_member_interferences([sloped, butting])
+        b = next(c for c in result if c['member_id'] == 'butting')
+        assert b['end'] == [pytest.approx(0.0), pytest.approx(500.0)]
 
     def test_non_overlapping_z_not_trimmed(self) -> None:
         # 上下に離れた段差梁（Z 範囲が重ならない）は干渉とみなさない
