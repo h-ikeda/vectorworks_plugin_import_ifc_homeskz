@@ -29,7 +29,7 @@ def make_storey(ifc: ifcopenshell.file, name: str, elevation: float) -> ifcopens
 def make_beam(ifc: ifcopenshell.file, storey: ifcopenshell.entity_instance,
               ox: float, oy: float, dx: float = 1.0, dy: float = 0.0,
               width: float = 120.0, height: float = 180.0, length: float = 3000.0,
-              material_name: str = '') -> ifcopenshell.entity_instance:
+              material_name: str = '', oz: float = 0.0) -> ifcopenshell.entity_instance:
     """テスト用 IfcBeam を生成して storey に追加する。
 
     Parameters
@@ -39,9 +39,10 @@ def make_beam(ifc: ifcopenshell.file, storey: ifcopenshell.entity_instance,
     width    : IfcRectangleProfileDef.XDim (幅, mm)
     height   : IfcRectangleProfileDef.YDim (背, mm)
     length   : IfcExtrudedAreaSolid.Depth (長さ, mm)
+    oz       : ビームのローカル配置 Z 座標 (mm, ストーリ FL からの相対)
     """
     # 配置（梁の延伸方向 = ローカル Z = Axis 属性）
-    pt = ifc.create_entity('IfcCartesianPoint', Coordinates=[ox, oy, 0.0])
+    pt = ifc.create_entity('IfcCartesianPoint', Coordinates=[ox, oy, oz])
     axis = ifc.create_entity('IfcDirection', DirectionRatios=[dx, dy, 0.0])
     placement_3d = ifc.create_entity('IfcAxis2Placement3D', Location=pt, Axis=axis)
     local_placement = ifc.create_entity('IfcLocalPlacement', RelativePlacement=placement_3d)
@@ -354,6 +355,30 @@ class TestBuildMemberCommands:
         assert command['end'] == [pytest.approx(1100.0), pytest.approx(500.0)]
         # layer_elevation = storey.Elevation + resolve_beam_top_offset = 473 + 0 = 473
         assert command['elevation'] == pytest.approx(473.0)
+
+    def test_uses_beam_local_z_for_elevation(self) -> None:
+        """各横架材は自身のローカル配置 Z で絶対高さに描画される。"""
+        ifc = ifcopenshell.file()
+        storey = make_storey(ifc, '1FL', 473.0)
+        make_storey(ifc, 'RFL', 5973.0)
+        # ローカル Z = -250 の梁: 絶対高さ = 473 + (-250) = 223
+        make_beam(ifc, storey, 0.0, 0.0, oz=-250.0)
+
+        commands = build_member_commands(ifc)
+        assert len(commands) == 1
+        assert commands[0]['elevation'] == pytest.approx(223.0)
+
+    def test_beams_at_different_heights_get_distinct_elevations(self) -> None:
+        """基準高さにない横架材も含め、各梁が固有の高さに配置される。"""
+        ifc = ifcopenshell.file()
+        storey = make_storey(ifc, '1FL', 473.0)
+        make_storey(ifc, 'RFL', 5973.0)
+        make_beam(ifc, storey, 0.0, 0.0, oz=-48.0)
+        make_beam(ifc, storey, 0.0, 1000.0, oz=-300.0)
+
+        elevations = sorted(c['elevation'] for c in build_member_commands(ifc))
+        assert elevations[0] == pytest.approx(173.0)   # 473 - 300
+        assert elevations[1] == pytest.approx(425.0)   # 473 - 48
 
     def test_sets_member_id_and_dimensions(self) -> None:
         ifc = ifcopenshell.file()
