@@ -186,7 +186,7 @@ def _trim_for_end(
     食い込み量が同等（対称な角・火打等）なら触らない。複数の相手に食い込む
     場合は、すべての面より外側になるよう最大値を採用する。
     """
-    asx, asy, aex, aey, aux, auy, _alen = self_geom
+    asx, asy, _aex, _aey, aux, auy, _alen = self_geom
     best = 0.0
     for (bsx, bsy, bex, bey, bux, buy, blen), b_hw in others:
         s_ab = _penetration_depth(px, py, gx, gy, bsx, bsy, bux, buy, blen, b_hw)
