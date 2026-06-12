@@ -11,7 +11,13 @@ from typing import TYPE_CHECKING
 
 from ..document import MemberCommand
 from .grid import resolve_lines
-from .story import LEVEL_BEAM_TOP, LEVEL_EAVES, layer_prefix_for, resolve_beam_top_offset
+from .story import (
+    LEVEL_BEAM_TOP,
+    LEVEL_EAVES,
+    get_local_placement_z,
+    layer_prefix_for,
+    resolve_beam_top_offset,
+)
 
 if TYPE_CHECKING:
     import ifcopenshell
@@ -160,6 +166,15 @@ def build_member_commands(ifc_file: ifcopenshell.file) -> list[MemberCommand]:
                 x2 = x1 + dx * length
                 y2 = y1 + dy * length
 
+                # 各横架材は固定の横架材天端高さではなく、IFC 上の実際の
+                # ローカル配置 Z で描画する。基準高さ（横架材天端）にない梁も
+                # 正しい高さに配置するため。Z が取得できない梁のみレイヤ基準高さを使う。
+                local_z = get_local_placement_z(element)
+                if local_z is None:
+                    elevation = layer_elevation
+                else:
+                    elevation = storey_elevation + local_z
+
                 material = _get_material_name(element)
                 member_id = make_member_id(width, height, material)
 
@@ -170,7 +185,7 @@ def build_member_commands(ifc_file: ifcopenshell.file) -> list[MemberCommand]:
                     'end': [x2, y2],
                     'width': width,
                     'height': height,
-                    'elevation': layer_elevation,
+                    'elevation': elevation,
                 })
 
     return commands
