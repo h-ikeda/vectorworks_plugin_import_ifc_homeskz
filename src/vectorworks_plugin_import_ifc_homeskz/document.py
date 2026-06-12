@@ -4,10 +4,10 @@
 描画フェーズ（``vw`` パッケージ）が消費する JSON 直列化可能な dict。
 このモジュールは vs にも ifcopenshell にも依存しない。
 
-スキーマ (version 1):
+スキーマ (version 2):
 
     {
-        "version": 1,
+        "version": 2,
         "stories": [
             {
                 "name": "1階",            # VectorWorks のストーリ名
@@ -35,11 +35,16 @@
             {
                 "layer": "1-横架材天端",   # 配置先デザインレイヤ名（既存のみ・なければスキップ）
                 "member_id": "120×180 - 杉...",  # 構造材 ID
+                # start/end・elevation/end_elevation は断面の基準点
+                # （左右中央・上端 = 天端中央）が通る線を表す。構造材ツールの
+                # 断面基準点（左右中央・上端）にそのまま渡せる座標。
                 "start": [x1, y1],        # 始点 (mm, センタリング済み)
                 "end": [x2, y2],          # 終点 (mm, センタリング済み)
                 "width": 120.0,           # 断面幅 (mm)
                 "height": 180.0,          # 断面背 (mm)
-                "elevation": 425.0        # 配置 Z 高さ (mm, 絶対値)
+                "elevation": 425.0,       # 始点の天端 Z 高さ (mm, 絶対値)
+                "end_elevation": 425.0    # 終点の天端 Z 高さ (mm, 絶対値)。
+                                          # 始点と異なる場合は傾斜梁（登り梁・隅木等）
             }
         ],
         "columns": [
@@ -72,7 +77,7 @@ from __future__ import annotations
 import json
 from typing import Any, TypedDict
 
-DOCUMENT_VERSION = 1
+DOCUMENT_VERSION = 2
 
 
 class LevelCommand(TypedDict):
@@ -104,7 +109,12 @@ GridCommand = TypedDict('GridCommand', {
 
 
 class MemberCommand(TypedDict):
-    """構造材 (StructuralMember オブジェクト) を描画する命令。"""
+    """構造材 (StructuralMember オブジェクト) を描画する命令。
+
+    start/end と elevation/end_elevation は断面の基準点（左右中央・上端 =
+    天端中央）が通る線を表す。elevation と end_elevation が異なる場合は
+    傾斜梁（登り梁・隅木等）。
+    """
 
     layer: str
     member_id: str
@@ -113,6 +123,7 @@ class MemberCommand(TypedDict):
     width: float
     height: float
     elevation: float
+    end_elevation: float
 
 
 class StoryBound(TypedDict):
@@ -223,7 +234,7 @@ def _validate_member(index: int, command: Any) -> None:
              f'{where}.start は [x, y] の数値ペアである必要があります')
     _require(_is_point(command.get('end')),
              f'{where}.end は [x, y] の数値ペアである必要があります')
-    for key in ('width', 'height', 'elevation'):
+    for key in ('width', 'height', 'elevation', 'end_elevation'):
         _require(_is_number(command.get(key)),
                  f'{where}.{key} は数値である必要があります')
 

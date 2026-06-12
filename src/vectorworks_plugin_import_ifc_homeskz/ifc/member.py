@@ -4,6 +4,12 @@ IFC の IfcBeam / IfcMember を走査し、各階の横架材天端レイヤ
 （最上階は軒高レイヤ）に配置する member 命令を生成する。
 構造材 ID は断面寸法と材種から "{幅}×{背} - {材種}" の形式で自動生成する。
 
+ホームズ君 IFC の梁は断面中心線（プロファイル中心の押し出し軸）で配置される。
+一方 VW 構造材ツールの断面基準点は左右中央・上端（天端中央）なので、
+断面中心線を軸直交方向に背/2 だけ持ち上げた天端中央線を命令に格納する。
+Axis 属性に Z 成分を持つ梁（登り梁・隅木等の傾斜梁）は始端と終端の
+天端 Z（``elevation``/``end_elevation``）が異なる傾斜した命令になる。
+
 横架材同士が食い込んでいる箇所（甲乙梁の T 字や出隅の L 字の取り合い等）は、
 相互の食い込み量を比べて勝ち負けを判定し、負け側（深く食い込む側）の端部を
 相手梁の面まで詰めて干渉を解消する（``resolve_member_interferences``）。
@@ -18,7 +24,6 @@ from .grid import resolve_lines
 from .story import (
     LEVEL_BEAM_TOP,
     LEVEL_EAVES,
-    get_local_placement_z,
     layer_prefix_for,
     resolve_beam_top_offset,
 )
@@ -36,17 +41,22 @@ _FACE_TOL = 1.0         # 相手の面ちょうどで止まる材を食い込み
 _MIN_TRIM = 1.0         # この値未満の食い込みは調整しない
 _MIN_LENGTH = 1.0       # 調整後にこの長さ未満になる場合は調整しない
 _SYMMETRY_TOL = 1.0     # 相互の食い込み量がこの差以内なら対称とみなし詰めない
+_SLOPE_TOL = 1.0        # 両端の天端 Z の差がこの値以下なら水平材とみなす
+
+# 軸の XY 成分がこれ以下の材は鉛直材（横架材でない）とみなしスキップする
+_VERTICAL_AXIS_TOL = 1e-9
 
 
-def _get_placement_2d(
+def _get_placement_3d(
     element: ifcopenshell.entity_instance,
-) -> tuple[float, float, float, float] | None:
-    """IfcProduct のローカル配置から 2D 座標 (ox, oy, dx, dy) を返す。
+) -> tuple[float, float, float | None, float, float, float] | None:
+    """IfcProduct のローカル配置から 3D 座標 (ox, oy, oz, ax, ay, az) を返す。
 
-    取得できない場合は None を返す。
-    dx, dy は梁軸方向の単位ベクトル（Axis の XY 成分）。
-    ホームズ君 IFC では押し出し方向が常にローカル Z (Axis) なので
-    梁の延伸方向 = Axis 属性を使う。Axis が未設定の場合は (1.0, 0.0) を使う。
+    取得できない場合は None を返す。oz は配置 Z 座標で、座標が 2 要素しか
+    ない場合は None（呼び出し側でレイヤ基準高さにフォールバックする）。
+    ax, ay, az は梁軸方向の 3D 単位ベクトル。ホームズ君 IFC では押し出し方向が
+    常にローカル Z (Axis) なので梁の延伸方向 = Axis 属性を使う。登り梁・隅木等の
+    傾斜梁は Axis に Z 成分を持つ。Axis が未設定の場合は (1.0, 0.0, 0.0) を使う。
     """
     placement = getattr(element, 'ObjectPlacement', None)
     if placement is None or not placement.is_a('IfcLocalPlacement'):
@@ -59,20 +69,19 @@ def _get_placement_2d(
         return None
     coords = loc.Coordinates
     ox, oy = float(coords[0]), float(coords[1])
+    oz = float(coords[2]) if len(coords) >= 3 else None
 
+    ax, ay, az = 1.0, 0.0, 0.0
     axis = rel.Axis
     if axis is not None and len(axis.DirectionRatios) >= 2:
         dx = float(axis.DirectionRatios[0])
         dy = float(axis.DirectionRatios[1])
-        norm = math.hypot(dx, dy)
+        dz = float(axis.DirectionRatios[2]) if len(axis.DirectionRatios) >= 3 else 0.0
+        norm = math.sqrt(dx * dx + dy * dy + dz * dz)
         if norm > 0.0:
-            dx, dy = dx / norm, dy / norm
-        else:
-            dx, dy = 1.0, 0.0
-    else:
-        dx, dy = 1.0, 0.0
+            ax, ay, az = dx / norm, dy / norm, dz / norm
 
-    return ox, oy, dx, dy
+    return ox, oy, oz, ax, ay, az
 
 
 def _get_profile_dims(
@@ -214,12 +223,18 @@ def resolve_member_interferences(
     相互の食い込み量が同等な対称の角（火打等）は勝ち負けが付かないため触らない。
     相手梁の形状は変えず、食い込む側のみ短くする。
 
+    傾斜梁（登り梁・隅木等、両端の天端 Z が異なる材）は高さが一定でなく
+    水平面内の矩形モデルが成り立たないため、詰める側にも相手側にもしない。
+
     判定は入力時点のジオメトリ（スナップショット）に対して行うため、
     命令の並び順に依存しない決定的な結果になる。入力 commands は変更せず、
     調整後の新しいリストを返す。
     """
     geoms: list[_Geom | None] = []
     for c in commands:
+        if abs(c['end_elevation'] - c['elevation']) > _SLOPE_TOL:
+            geoms.append(None)  # 傾斜梁は調整対象外
+            continue
         sx, sy = c['start']
         ex, ey = c['end']
         dx, dy = ex - sx, ey - sy
@@ -263,6 +278,7 @@ def resolve_member_interferences(
             'width': command['width'],
             'height': command['height'],
             'elevation': command['elevation'],
+            'end_elevation': command['end_elevation'],
         })
 
     return result
@@ -305,29 +321,49 @@ def build_member_commands(ifc_file: ifcopenshell.file) -> list[MemberCommand]:
                 if not any(element.is_a(t) for t in _IFC_MEMBER_TYPES):
                     continue
 
-                placement = _get_placement_2d(element)
+                placement = _get_placement_3d(element)
                 if placement is None:
                     continue
                 dims = _get_profile_dims(element)
                 if dims is None:
                     continue
 
-                ox, oy, dx, dy = placement
+                ox, oy, oz, ax, ay, az = placement
                 width, height, length = dims
 
+                # 軸が鉛直な材は横架材でないためスキップ
+                horiz = math.hypot(ax, ay)
+                if horiz <= _VERTICAL_AXIS_TOL:
+                    continue
+
+                # 断面中心線の始端・終端（傾斜梁は軸の Z 成分で終端の高さが変わる。
+                # 平面座標も軸の XY 成分 × 全長で求め、平面投影長を正しくする）
                 x1 = ox - center_x
                 y1 = oy - center_y
-                x2 = x1 + dx * length
-                y2 = y1 + dy * length
+                x2 = x1 + ax * length
+                y2 = y1 + ay * length
 
                 # 各横架材は固定の横架材天端高さではなく、IFC 上の実際の
                 # ローカル配置 Z で描画する。基準高さ（横架材天端）にない梁も
                 # 正しい高さに配置するため。Z が取得できない梁のみレイヤ基準高さを使う。
-                local_z = get_local_placement_z(element)
-                if local_z is None:
+                # IFC の配置点は断面中心なので、構造材ツールの断面基準点
+                # （左右中央・上端）に合わせ、軸に直交し軸を含む鉛直面内で
+                # 上向きの単位ベクトル n の方向に背/2 だけ持ち上げ天端中央線にする。
+                if oz is None:
+                    # レイヤ基準高さ（横架材天端）は既に天端の高さなので補正不要
                     elevation = layer_elevation
+                    end_elevation = layer_elevation
                 else:
-                    elevation = storey_elevation + local_z
+                    nx = -az * ax / horiz
+                    ny = -az * ay / horiz
+                    nz = horiz
+                    half = height / 2.0
+                    x1 += nx * half
+                    y1 += ny * half
+                    x2 += nx * half
+                    y2 += ny * half
+                    elevation = storey_elevation + oz + nz * half
+                    end_elevation = elevation + az * length
 
                 material = _get_material_name(element)
                 member_id = make_member_id(width, height, material)
@@ -340,6 +376,7 @@ def build_member_commands(ifc_file: ifcopenshell.file) -> list[MemberCommand]:
                     'width': width,
                     'height': height,
                     'elevation': elevation,
+                    'end_elevation': end_elevation,
                 })
 
     # 横架材同士が食い込んでいる箇所は端部の長さを詰めて干渉を解消する

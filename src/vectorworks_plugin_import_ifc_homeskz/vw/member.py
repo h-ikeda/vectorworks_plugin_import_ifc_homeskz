@@ -14,14 +14,18 @@ def draw_member(command: MemberCommand) -> None:
     パスはローカル原点 (0,0,0) から方向ベクトルで定義し、
     CreateCustomObjectPath 後に Move3D で絶対位置へ移動する。
     これは VW 構造材ツールの期待する配置パターンと一致する。
+    始端と終端の天端 Z（elevation/end_elevation）が異なる傾斜梁
+    （登り梁・隅木等）は Z 成分を持つ 3D パスとして描画する。
     プラグインが利用できない場合は通常の直線にフォールバックする。
     """
     x1, y1 = command['start']
     x2, y2 = command['end']
+    z1 = command['elevation']
+    z2 = command['end_elevation']
 
     # パスをローカル座標で作成 (始点=原点、終点=方向×長さ)
     path_h = vs.CreateNurbsCurve(0, 0, 0, False, 1)
-    vs.AddVertex3D(path_h, x2 - x1, y2 - y1, 0)
+    vs.AddVertex3D(path_h, x2 - x1, y2 - y1, z2 - z1)
 
     w = int(round(command['width']))
     h = int(round(command['height']))
@@ -35,7 +39,7 @@ def draw_member(command: MemberCommand) -> None:
     if obj != vs.Handle(0):
         # ローカル原点から実際の配置位置へ移動
         vs.ResetOrientation3D()
-        vs.Move3D(x1, y1, command['elevation'])
+        vs.Move3D(x1, y1, z1)
         vs.SetRField(obj, PLUGIN_NAME, 'MemberID', command['member_id'])
         vs.SetRField(obj, PLUGIN_NAME, 'ProfileShape', 'Rectangle')
         vs.SetRField(obj, PLUGIN_NAME, 'MajorBreadth', str(w))
