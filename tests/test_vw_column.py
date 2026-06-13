@@ -142,8 +142,8 @@ class TestExecuteColumns:
         ])
         set_rfield_args = [c.args for c in vs_mock.SetRField.call_args_list]
         fields = {field: value for _, _, field, value in set_rfield_args}
-        assert fields['伏図記号を表示'] == 'True'
-        assert fields['伏図レイヤ'] == '1-柱(伏図)'
+        assert fields['isShowSecondary'] == 'True'
+        assert fields['upperLayerName'] == '1-柱(伏図)'
 
     def test_sets_story_bounds_for_top_and_bottom(self) -> None:
         """上下端の高さをストーリレベル基準 (SetObjectStoryBound) でバインドする。"""
