@@ -127,25 +127,36 @@ def resolve_column_type(object_type: str | None) -> str:
 def _get_position_2d(
     element: ifcopenshell.entity_instance,
 ) -> tuple[float, float] | None:
-    """IfcProduct のローカル配置から 2D 配置座標 (ox, oy) を返す。
+    """IfcProduct のローカル配置から絶対 2D 配置座標 (ox, oy) を返す。
 
-    取得できない場合は None を返す。ホームズ君 IFC ではストーリの XY 原点が
-    (0, 0) のため、ローカル配置 Location の XY をそのまま平面座標として扱える
-    (横架材と同じ座標系・グリッド中心オフセットで補正できる)。
+    取得できない場合は None を返す。配置チェーン(PlacementRelTo)を末端まで
+    辿り、各段の Location XY を加算して絶対座標を求める。ホームズ君 IFC の
+    配置は回転を持たない(軸平行)ため XY を加算するだけで絶対座標になる。
+
+    柱頭・柱脚金物は柱を親配置(PlacementRelTo = 柱の配置)とする入れ子配置で
+    エクスポートされる場合があり、その金物の Location XY は柱からの相対
+    オフセット(ほぼ 0)になる。immediate Location だけを見ると柱の絶対座標と
+    一致せず対応付けに失敗するため、チェーンを辿って絶対座標で突き合わせる。
+    ストーリ直下に配置された柱・金物(親 XY = 0)では結果は変わらない。
     """
     placement = getattr(element, 'ObjectPlacement', None)
     if placement is None or not placement.is_a('IfcLocalPlacement'):
         return None
-    rel = placement.RelativePlacement
-    if rel is None or not rel.is_a('IfcAxis2Placement3D'):
+    ox = 0.0
+    oy = 0.0
+    found = False
+    while placement is not None and placement.is_a('IfcLocalPlacement'):
+        rel = placement.RelativePlacement
+        if rel is not None and rel.is_a('IfcAxis2Placement3D') and rel.Location is not None:
+            coords = rel.Location.Coordinates
+            if len(coords) >= 2:
+                ox += float(coords[0])
+                oy += float(coords[1])
+                found = True
+        placement = placement.PlacementRelTo
+    if not found:
         return None
-    loc = rel.Location
-    if loc is None:
-        return None
-    coords = loc.Coordinates
-    if len(coords) < 2:
-        return None
-    return float(coords[0]), float(coords[1])
+    return ox, oy
 
 
 def _base_level(

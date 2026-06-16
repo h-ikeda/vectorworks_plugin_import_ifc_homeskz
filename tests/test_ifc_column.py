@@ -135,6 +135,35 @@ class TestGetPosition2D:
         col = ifc.create_entity('IfcColumn')
         assert _get_position_2d(col) is None
 
+    def test_resolves_absolute_position_through_placement_chain(self) -> None:
+        """親配置(PlacementRelTo)を辿って絶対座標を合算する。
+
+        柱頭・柱脚金物が柱を親配置とする入れ子配置でエクスポートされた場合、
+        金物の immediate Location は柱からの相対オフセット(ほぼ 0)になる。
+        絶対座標(親 + 子)で突き合わせられるようチェーンを辿る。
+        """
+        ifc = ifcopenshell.file()
+        # 親(柱相当): 絶対 (1000, 2000)
+        parent_pt = ifc.create_entity(
+            'IfcCartesianPoint', Coordinates=[1000.0, 2000.0, -174.0])
+        parent_ap = ifc.create_entity('IfcAxis2Placement3D', Location=parent_pt)
+        parent_lp = ifc.create_entity('IfcLocalPlacement', RelativePlacement=parent_ap)
+        # 子(金物相当): 親からの相対オフセット (0, 0, 2544) で柱頭付近に乗る
+        child_pt = ifc.create_entity(
+            'IfcCartesianPoint', Coordinates=[0.0, 0.0, 2544.0])
+        child_ap = ifc.create_entity('IfcAxis2Placement3D', Location=child_pt)
+        child_lp = ifc.create_entity(
+            'IfcLocalPlacement', RelativePlacement=child_ap, PlacementRelTo=parent_lp)
+        fastener = ifc.create_entity(
+            'IfcMechanicalFastener', ObjectPlacement=child_lp)
+
+        result = _get_position_2d(fastener)
+        assert result is not None
+        ox, oy = result
+        # 親の絶対 XY と一致する(子の相対オフセット 0 を加算)
+        assert ox == pytest.approx(1000.0)
+        assert oy == pytest.approx(2000.0)
+
 
 # ---------------------------------------------------------------------------
 # resolve_column_type
