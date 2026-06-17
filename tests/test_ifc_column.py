@@ -81,7 +81,7 @@ def make_hardware(ifc: ifcopenshell.file, storey: ifcopenshell.entity_instance,
     """テスト用 柱頭/柱脚金物 (IfcMechanicalFastener) を生成して storey に追加する。
 
     name に ``柱頭金物`` / ``柱脚金物`` を含めると柱頭/柱脚として分類される。
-    type_name は金物の型名(例: ``柱頭金物:(ろ)``)で、コロン以降が仕様になる。
+    type_name は金物の型名(例: ``柱頭金物:(ろ)``)で、加工せずそのまま仕様になる。
     """
     pt = ifc.create_entity('IfcCartesianPoint', Coordinates=[ox, oy, oz])
     placement_3d = ifc.create_entity('IfcAxis2Placement3D', Location=pt)
@@ -156,9 +156,10 @@ class TestResolveColumnType:
 # ---------------------------------------------------------------------------
 
 class TestHardwareSpec:
-    def test_extracts_part_after_colon(self) -> None:
-        assert _hardware_spec('柱頭金物:(ろ)') == '(ろ)'
-        assert _hardware_spec('柱脚金物:C12') == 'C12'
+    def test_returns_type_name_unprocessed(self) -> None:
+        """型名は加工せず(コロン分割せず)そのまま仕様文字列になる。"""
+        assert _hardware_spec('柱頭金物:(ろ)') == '柱頭金物:(ろ)'
+        assert _hardware_spec('柱脚金物:C12') == '柱脚金物:C12'
 
     def test_returns_whole_name_without_separator(self) -> None:
         assert _hardware_spec('HD-B20') == 'HD-B20'
@@ -351,8 +352,8 @@ class TestBuildColumnCommands:
                       name='柱No.4:柱脚金物', type_name='柱脚金物:(い)', oz=-174.0)
 
         command = build_column_commands(ifc)[0]
-        assert command['top_hardware'] == '(ろ)'
-        assert command['bottom_hardware'] == '(い)'
+        assert command['top_hardware'] == '柱頭金物:(ろ)'
+        assert command['bottom_hardware'] == '柱脚金物:(い)'
 
     def test_does_not_match_hardware_at_other_position(self) -> None:
         """別の平面座標の金物は対応付けない。"""
