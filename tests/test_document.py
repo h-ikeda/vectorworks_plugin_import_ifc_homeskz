@@ -49,12 +49,11 @@ def make_valid_document() -> dict[str, Any]:
         ],
         'columns': [
             {
-                'layer': '1-柱', 'plan_layer': '1-柱(伏図)', 'column_type': '管柱',
+                'layer': '1-柱',
+                'member_id': '105×105 - 管柱 / 柱頭金物:(ろ) / 柱脚金物:(ろ)',
                 'position': [0.0, 0.0],
                 'width': 105.0, 'depth': 105.0, 'height': 2844.0, 'elevation': 426.0,
-                'bottom_bound': {'story': 0, 'level': '横架材天端', 'offset': 1.0},
-                'top_bound': {'story': 1, 'level': '横架材天端', 'offset': -200.0},
-                'top_hardware': '(ろ)', 'bottom_hardware': '(ろ)',
+                'top_hardware': '柱頭金物:(ろ)', 'bottom_hardware': '柱脚金物:(ろ)',
             },
         ],
     }
@@ -152,16 +151,10 @@ class TestValidateDocument:
         with pytest.raises(DocumentValidationError, match='depth'):
             validate_document(document)
 
-    def test_rejects_column_without_plan_layer(self) -> None:
+    def test_rejects_column_with_non_string_member_id(self) -> None:
         document = make_valid_document()
-        del document['columns'][0]['plan_layer']
-        with pytest.raises(DocumentValidationError, match='plan_layer'):
-            validate_document(document)
-
-    def test_rejects_column_with_empty_type(self) -> None:
-        document = make_valid_document()
-        document['columns'][0]['column_type'] = ''
-        with pytest.raises(DocumentValidationError, match='column_type'):
+        document['columns'][0]['member_id'] = 105
+        with pytest.raises(DocumentValidationError, match='member_id'):
             validate_document(document)
 
     def test_rejects_column_with_bad_position(self) -> None:
@@ -170,29 +163,10 @@ class TestValidateDocument:
         with pytest.raises(DocumentValidationError, match='position'):
             validate_document(document)
 
-    def test_rejects_column_without_bound(self) -> None:
+    def test_rejects_column_with_non_string_hardware(self) -> None:
         document = make_valid_document()
-        del document['columns'][0]['top_bound']
-        with pytest.raises(DocumentValidationError, match='top_bound'):
-            validate_document(document)
-
-    def test_rejects_bound_with_non_int_story(self) -> None:
-        document = make_valid_document()
-        document['columns'][0]['bottom_bound']['story'] = 0.5
-        with pytest.raises(DocumentValidationError, match='story'):
-            validate_document(document)
-
-    def test_rejects_bound_with_out_of_range_story(self) -> None:
-        # boundStory は -1/0/1 のみ(SetObjectStoryBound の契約)
-        document = make_valid_document()
-        document['columns'][0]['top_bound']['story'] = 2
-        with pytest.raises(DocumentValidationError, match='story'):
-            validate_document(document)
-
-    def test_rejects_bound_with_empty_level(self) -> None:
-        document = make_valid_document()
-        document['columns'][0]['top_bound']['level'] = ''
-        with pytest.raises(DocumentValidationError, match='level'):
+        document['columns'][0]['top_hardware'] = 123
+        with pytest.raises(DocumentValidationError, match='top_hardware'):
             validate_document(document)
 
     def test_rejects_non_json_serializable_value(self) -> None:

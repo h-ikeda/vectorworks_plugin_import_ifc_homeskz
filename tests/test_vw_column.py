@@ -1,4 +1,7 @@
-"""描画フェーズ (vw.column) のテスト。vs をモックし手書きの column 命令で検証する。"""
+"""描画フェーズ (vw.column) のテスト。vs をモックし手書きの column 命令で検証する。
+
+柱は梁と同じ構造材ツール (StructuralMember) で鉛直材として描画される。
+"""
 from __future__ import annotations
 
 import importlib
@@ -7,29 +10,24 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from vectorworks_plugin_import_ifc_homeskz.document import ColumnCommand, StoryBound
+from vectorworks_plugin_import_ifc_homeskz.document import ColumnCommand
 
 
-def make_column_command(layer: str = '1-柱', plan_layer: str = '1-柱(伏図)',
-                        column_type: str = '管柱',
+def make_column_command(layer: str = '1-柱',
+                        member_id: str = '105×105 - 管柱',
                         position: tuple[float, float] = (0.0, 0.0),
                         width: float = 105.0, depth: float = 105.0,
                         height: float = 2844.0, elevation: float = 426.0,
-                        bottom_bound: StoryBound | None = None,
-                        top_bound: StoryBound | None = None,
                         top_hardware: str = '',
                         bottom_hardware: str = '') -> ColumnCommand:
     return {
         'layer': layer,
-        'plan_layer': plan_layer,
-        'column_type': column_type,
+        'member_id': member_id,
         'position': list(position),
         'width': width,
         'depth': depth,
         'height': height,
         'elevation': elevation,
-        'bottom_bound': bottom_bound or {'story': 0, 'level': '横架材天端', 'offset': 1.0},
-        'top_bound': top_bound or {'story': 1, 'level': '横架材天端', 'offset': -200.0},
         'top_hardware': top_hardware,
         'bottom_hardware': bottom_hardware,
     }
@@ -39,7 +37,7 @@ def _make_vs_mock(existing_layers: Collection[str] = ()) -> MagicMock:
     """execute_columns() 用 vs モック。
 
     existing_layers に含まれるレイヤ名は GetObject で非 null を返す。
-    CreateCustomObject は非 null を返し (プラグイン利用可能)、
+    CreateCustomObjectPath は非 null を返し (プラグイン利用可能)、
     SetRField / ResetObject の呼び出しを追跡できる。
     """
     vs_mock = MagicMock()
@@ -47,7 +45,7 @@ def _make_vs_mock(existing_layers: Collection[str] = ()) -> MagicMock:
     non_null_handle = object()
     vs_mock.Handle.return_value = null_handle
     vs_mock.LNewObj.return_value = non_null_handle
-    vs_mock.CreateCustomObject.return_value = non_null_handle
+    vs_mock.CreateCustomObjectPath.return_value = non_null_handle
 
     def get_obj(name: str) -> object:
         return non_null_handle if name in existing_layers else null_handle
@@ -96,121 +94,76 @@ class TestExecuteColumns:
         assert '1-柱' in layer_calls
         assert 'R-柱' in layer_calls
 
-    def test_creates_object_at_origin_and_moves_to_position(self) -> None:
-        """柱はローカル原点に生成し、Move3D で絶対位置(XY + Z)へ移動する。"""
+    def test_draws_vertical_path_and_moves_to_position(self) -> None:
+        """鉛直パスをローカル原点から高さ分作り、Move3D で下端の絶対位置へ移動する。"""
         vs_mock = _make_vs_mock(existing_layers={'1-柱'})
-        create_calls: list[tuple[str, float, float]] = []
+        nurbs_calls: list[tuple[float, float]] = []
+        vertex_calls: list[tuple[float, float, float]] = []
         move3d_calls: list[tuple[float, float, float]] = []
 
-        def capture_create(name: str, x: float, y: float, angle: float) -> object:
-            create_calls.append((name, x, y))
+        def capture_nurbs(x: float, y: float, z: float, closed: bool, order: int) -> object:
+            nurbs_calls.append((x, y))
             return object()
+
+        def capture_vertex(h: object, x: float, y: float, z: float) -> None:
+            vertex_calls.append((x, y, z))
 
         def capture_move3d(x: float, y: float, z: float) -> None:
             move3d_calls.append((x, y, z))
 
-        vs_mock.CreateCustomObject.side_effect = capture_create
+        vs_mock.CreateNurbsCurve.side_effect = capture_nurbs
+        vs_mock.AddVertex3D.side_effect = capture_vertex
         vs_mock.Move3D.side_effect = capture_move3d
 
         _run_execute_columns(vs_mock, [
-            make_column_command(position=(500.0, 800.0), elevation=426.0),
+            make_column_command(position=(500.0, 800.0), height=2844.0, elevation=426.0),
         ])
 
-        # ローカル原点 (0, 0) に生成
-        assert create_calls == [('柱・間柱', 0, 0)]
-        # Move3D で (500, 800, 426) へ移動
+        # パスはローカル原点 (0, 0) から鉛直方向 (0, 0, 高さ) へ
+        assert nurbs_calls == [(0, 0)]
+        assert vertex_calls == [
+            (pytest.approx(0.0), pytest.approx(0.0), pytest.approx(2844.0)),
+        ]
+        # Move3D で下端 (500, 800, 426) へ移動
         assert any(
             abs(x - 500.0) < 1e-6 and abs(y - 800.0) < 1e-6 and abs(z - 426.0) < 1e-6
             for x, y, z in move3d_calls
         )
 
-    def test_sets_record_fields(self) -> None:
+    def test_sets_structural_member_record_fields(self) -> None:
         vs_mock = _make_vs_mock(existing_layers={'1-柱'})
         _run_execute_columns(vs_mock, [
-            make_column_command(column_type='管柱', width=105.0, depth=120.0, height=2844.0),
+            make_column_command(member_id='105×120 - 管柱', width=105.0, depth=120.0),
         ])
         set_rfield_args = [c.args for c in vs_mock.SetRField.call_args_list]
-        # (obj, plugin, field, value) のうち field→value の対応を取り出す
+        # (obj, plugin, field, value) のうち plugin と field→value を取り出す
+        plugins = {plugin for _, plugin, _, _ in set_rfield_args}
         fields = {field: value for _, _, field, value in set_rfield_args}
-        assert fields['Type'] == '管柱'
-        assert fields['SecShape'] == '矩形'
-        assert fields['Width'] == '105'
-        assert fields['Depth'] == '120'
-        assert fields['Height'] == '2844'
+        assert plugins == {'StructuralMember'}
+        assert fields['MemberID'] == '105×120 - 管柱'
+        assert fields['ProfileShape'] == 'Rectangle'
+        assert fields['MajorBreadth'] == '105'
+        assert fields['MajorDepth'] == '120'
+        assert fields['B'] == '105'
+        assert fields['D'] == '120'
 
-    def test_enables_plan_symbol_on_plan_layer(self) -> None:
-        """伏図記号を表示し、伏図レイヤを命令の plan_layer に設定する。"""
-        vs_mock = _make_vs_mock(existing_layers={'1-柱'})
-        _run_execute_columns(vs_mock, [
-            make_column_command(plan_layer='1-柱(伏図)'),
-        ])
-        set_rfield_args = [c.args for c in vs_mock.SetRField.call_args_list]
-        fields = {field: value for _, _, field, value in set_rfield_args}
-        assert fields['isShowSecondary'] == 'True'
-        assert fields['upperLayerName'] == '1-柱(伏図)'
-        assert fields['Mclass'] == '04構造-02木造-03柱-02管柱'
-        assert fields['2DShapeClass'] == '04構造-02木造-03柱-02管柱'
-        assert fields['3DShapeClass'] == '04構造-02木造-03柱-02管柱'
-        assert fields['SectionMarkClass'] == '01作図-01線-02実線-01極細線'
-        assert fields['CircleMarkClass'] == '01作図-01線-02実線-03中線'
-        assert fields['SecondaryClass'] == '01作図-01線-02実線-03中線'
-
-    def test_sets_hardware_fields(self) -> None:
-        """柱頭・柱脚金物の仕様を TopHard / BtmHard に格納する。"""
-        vs_mock = _make_vs_mock(existing_layers={'1-柱'})
-        _run_execute_columns(vs_mock, [
-            make_column_command(top_hardware='(ろ)', bottom_hardware='(い)'),
-        ])
-        set_rfield_args = [c.args for c in vs_mock.SetRField.call_args_list]
-        fields = {field: value for _, _, field, value in set_rfield_args}
-        assert fields['TopHard'] == '(ろ)'
-        assert fields['BtmHard'] == '(い)'
-
-    def test_maps_standcolumn_to_koyatsuka(self) -> None:
-        """STANDCOLUMN を小屋束にマッピングする。"""
-        vs_mock = _make_vs_mock(existing_layers={'1-柱'})
-        _run_execute_columns(vs_mock, [
-            make_column_command(column_type='STANDCOLUMN'),
-        ])
-        set_rfield_args = [c.args for c in vs_mock.SetRField.call_args_list]
-        fields = {field: value for _, _, field, value in set_rfield_args}
-        assert fields['Type'] == '小屋束'
-        assert fields['Mclass'] == '04構造-02木造-05小屋組-02小屋束'
-
-    def test_sets_tooshidbashira_class(self) -> None:
-        """通し柱の場合に対応するクラスを設定する。"""
-        vs_mock = _make_vs_mock(existing_layers={'1-柱'})
-        _run_execute_columns(vs_mock, [
-            make_column_command(column_type='通し柱'),
-        ])
-        set_rfield_args = [c.args for c in vs_mock.SetRField.call_args_list]
-        fields = {field: value for _, _, field, value in set_rfield_args}
-        assert fields['Type'] == '通し柱'
-        assert fields['Mclass'] == '04構造-02木造-03柱-01通し柱'
-
-    def test_sets_story_bounds_for_top_and_bottom(self) -> None:
-        """上下端の高さをストーリレベル基準 (SetObjectStoryBound) でバインドする。"""
+    def test_member_id_carries_hardware_spec(self) -> None:
+        """柱頭・柱脚金物の仕様は member_id 経由で MemberID に格納される。"""
         vs_mock = _make_vs_mock(existing_layers={'1-柱'})
         _run_execute_columns(vs_mock, [
             make_column_command(
-                bottom_bound={'story': 0, 'level': '横架材天端', 'offset': 1.0},
-                top_bound={'story': 1, 'level': '横架材天端', 'offset': -200.0},
-            ),
+                member_id='105×105 - 管柱 / 柱頭金物:(ろ) / 柱脚金物:(い)',
+                top_hardware='柱頭金物:(ろ)', bottom_hardware='柱脚金物:(い)'),
         ])
-        # SetObjectStoryBound(obj, boundID, boundType=2(Story), boundStory, level, offset)
-        calls = [c.args for c in vs_mock.SetObjectStoryBound.call_args_list]
-        # boundID→(boundType, boundStory, level, offset)
-        by_id = {args[1]: args[2:] for args in calls}
-        # 下端 (boundID=1): 当該階(0) の横架材天端, offset 1.0
-        assert by_id[1] == (2, 0, '横架材天端', 1.0)
-        # 上端 (boundID=0): 上階(1) の横架材天端, offset -200.0
-        assert by_id[0] == (2, 1, '横架材天端', -200.0)
+        set_rfield_args = [c.args for c in vs_mock.SetRField.call_args_list]
+        fields = {field: value for _, _, field, value in set_rfield_args}
+        assert fields['MemberID'] == '105×105 - 管柱 / 柱頭金物:(ろ) / 柱脚金物:(い)'
 
     def test_fallback_to_rect_when_plugin_unavailable(self) -> None:
-        """柱・間柱プラグインが利用できない場合に断面の矩形にフォールバックする。"""
+        """構造材プラグインが利用できない場合に断面の矩形にフォールバックする。"""
         vs_mock = _make_vs_mock(existing_layers={'1-柱'})
         # プラグインが存在しない → Handle(0) を返す
-        vs_mock.CreateCustomObject.return_value = vs_mock.Handle.return_value
+        vs_mock.CreateCustomObjectPath.return_value = vs_mock.Handle.return_value
 
         count = _run_execute_columns(vs_mock, [make_column_command()])
 

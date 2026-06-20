@@ -1,111 +1,63 @@
-"""column 命令の描画。VectorWorks 木造BIM 柱・間柱ツールで柱を配置する。"""
+"""column 命令の描画。VectorWorks 構造材ツールで柱を鉛直材として配置する。
+
+柱は梁と同じ構造材ツール (StructuralMember) で描く。拡張パッケージの
+柱・間柱ツールはスクリプト操作に対して不安定なため、安定して扱える標準の
+構造材ツールに置き換えている。鉛直パス(下端→上端)に断面 width×depth の
+プロファイルを与え、絶対 Z の固定パスとして描画する(ストーリレベルへの
+高さバインドは使わない)。
+"""
 from __future__ import annotations
 
 import vs
 
-from ..document import ColumnCommand, StoryBound
+from ..document import ColumnCommand
 
-PLUGIN_NAME = '柱・間柱'
-
-# SetObjectStoryBound の boundType: 0=LayerZ, 1=DefaultWallHeight, 2=Story
-BOUND_TYPE_STORY = 2
-# 上下端それぞれの story bound 識別子 (0=上端, 1=下端)
-BOUND_ID_TOP = 0
-BOUND_ID_BOTTOM = 1
-
-# 伏図記号表示フィールド名・伏図レイヤフィールド名
-FIELD_SHOW_PLAN_SYMBOL = 'isShowSecondary'
-FIELD_PLAN_LAYER = 'upperLayerName'
-# 柱頭金物・柱脚金物フィールド名(柱・間柱ツール AAPillarS の実フィールド名)。
-# 仕様文字列(例: '(る)')は SetRField でそのまま書き込まれ、ツールの
-# ドロップダウン候補に無いカスタム値でも登録不要でそのまま格納・表示される。
-FIELD_TOP_HARDWARE = 'TopHard'
-FIELD_BOTTOM_HARDWARE = 'BtmHard'
-# 伏図記号表示を有効にするブール値
-PLAN_SYMBOL_ON = 'True'
-
-# 断面斜線クラス・丸記号クラス・伏図記号クラス（全種別共通）
-CLASS_SECTION_MARK = '01作図-01線-02実線-01極細線'
-CLASS_CIRCLE_MARK = '01作図-01線-02実線-03中線'
-CLASS_SECONDARY = '01作図-01線-02実線-03中線'
-
-# 柱種別ごとの本体クラス
-_COLUMN_TYPE_CLASS: dict[str, str] = {
-    '管柱': '04構造-02木造-03柱-02管柱',
-    '通し柱': '04構造-02木造-03柱-01通し柱',
-    '小屋束': '04構造-02木造-05小屋組-02小屋束',
-}
-
-
-def _set_story_bound(obj: object, bound_id: int, bound: StoryBound) -> None:
-    """柱の上端/下端の高さ基準をストーリレベル基準で設定する。"""
-    vs.SetObjectStoryBound(
-        obj, bound_id, BOUND_TYPE_STORY,
-        bound['story'], bound['level'], bound['offset'],
-    )
+PLUGIN_NAME = 'StructuralMember'
 
 
 def draw_column(command: ColumnCommand) -> None:
-    """column 命令 1 件を柱・間柱ツールで描画する。
+    """column 命令 1 件を構造材ツールで鉛直材として描画する。
 
-    柱はローカル原点 (0, 0) に生成し、CreateCustomObject 後に Move3D で
-    XY 位置へ移動する。上下端の高さは固定値ではなく SetObjectStoryBound で
-    ストーリレベル基準(下=横架材天端、上=上階の横架材天端 or 軒高)に
-    バインドし、階高変更に追従させる(Z 方向の高さはこのバインドが決める)。
-    伏図記号を表示し、伏図レイヤを当該階の柱(伏図)レイヤに設定する。
-    柱頭・柱脚金物の仕様を TopHard / BtmHard フィールドに格納する。
-    プラグインが利用できない場合は断面の矩形にフォールバックする。
+    パスはローカル原点 (0,0,0) から鉛直方向(高さ分)に定義し、
+    CreateCustomObjectPath 後に Move3D で下端の絶対位置 (XY + 下端 Z) へ移動する。
+    断面は width×depth の矩形プロファイル。member_id(柱頭・柱脚金物の仕様を
+    含む構造材 ID)を MemberID フィールドに格納する。プラグインが利用できない
+    場合は断面の矩形にフォールバックする。
     """
     x, y = command['position']
+    z_bottom = command['elevation']
     w = int(round(command['width']))
     d = int(round(command['depth']))
     h = int(round(command['height']))
 
-    obj = vs.CreateCustomObject(PLUGIN_NAME, 0, 0, 0)
+    # パスをローカル座標で作成 (始点=原点、終点=鉛直に高さ分)
+    path_h = vs.CreateNurbsCurve(0, 0, 0, False, 1)
+    vs.AddVertex3D(path_h, 0, 0, h)
+
+    # 断面プロファイル(width×depth の矩形)
+    vs.BeginGroup()
+    vs.ClosePoly()
+    vs.Poly(0, 0, 0, d, w, d, w, 0)
+    vs.EndGroup()
+    profile_h = vs.LNewObj()
+
+    obj = vs.CreateCustomObjectPath(PLUGIN_NAME, path_h, profile_h)
     if obj != vs.Handle(0):
-        # ローカル原点から実際の配置位置へ移動
+        # ローカル原点から実際の配置位置(下端の絶対位置)へ移動
         vs.ResetOrientation3D()
-        vs.Move3D(x, y, command['elevation'])
-        # 上下端の高さ基準をストーリレベルにバインド(Z 高さを決定する)
-        _set_story_bound(obj, BOUND_ID_TOP, command['top_bound'])
-        _set_story_bound(obj, BOUND_ID_BOTTOM, command['bottom_bound'])
-        raw_column_type = command['column_type']
-        if raw_column_type == 'STANDCOLUMN':
-            column_type = '小屋束'
-        elif raw_column_type in _COLUMN_TYPE_CLASS:
-            column_type = raw_column_type
-        else:
-            column_type = '管柱'
-        body_class = _COLUMN_TYPE_CLASS[column_type]
-        vs.SetRField(obj, PLUGIN_NAME, 'Type', column_type)
-        vs.SetRField(obj, PLUGIN_NAME, 'SecShape', '矩形')
-        vs.SetRField(obj, PLUGIN_NAME, 'Width', str(w))
-        vs.SetRField(obj, PLUGIN_NAME, 'Depth', str(d))
-        vs.SetRField(obj, PLUGIN_NAME, 'Height', str(h))
-        vs.SetRField(obj, PLUGIN_NAME, 'Rad', str(int(round(min(w, d) / 2))))
-        vs.SetRField(obj, PLUGIN_NAME, 'Dia', str(w))
-        # 本体クラス（2D・3D 共通、クラス属性を使用）
-        vs.SetRField(obj, PLUGIN_NAME, 'Mclass', body_class)
-        vs.SetRField(obj, PLUGIN_NAME, '2DShapeClass', body_class)
-        vs.SetRField(obj, PLUGIN_NAME, 'use2DShapeClass', 'True')
-        vs.SetRField(obj, PLUGIN_NAME, '3DShapeClass', body_class)
-        vs.SetRField(obj, PLUGIN_NAME, 'use3DShapeClass', 'True')
-        # 断面斜線クラス（クラス属性を使用）
-        vs.SetRField(obj, PLUGIN_NAME, 'SectionMarkClass', CLASS_SECTION_MARK)
-        vs.SetRField(obj, PLUGIN_NAME, 'useSectionMarkClass', 'True')
-        # 丸記号クラス（クラス属性を使用）
-        vs.SetRField(obj, PLUGIN_NAME, 'CircleMarkClass', CLASS_CIRCLE_MARK)
-        vs.SetRField(obj, PLUGIN_NAME, 'useCircleMarkClass', 'True')
-        vs.SetRField(obj, PLUGIN_NAME, 'Sclass', CLASS_CIRCLE_MARK)
-        # 伏図記号クラス（クラス属性を使用）
-        vs.SetRField(obj, PLUGIN_NAME, 'SecondaryClass', CLASS_SECONDARY)
-        vs.SetRField(obj, PLUGIN_NAME, 'useSecondaryClass', 'True')
-        # 伏図記号を表示し、伏図レイヤを当該階の柱(伏図)レイヤに設定する
-        vs.SetRField(obj, PLUGIN_NAME, FIELD_SHOW_PLAN_SYMBOL, PLAN_SYMBOL_ON)
-        vs.SetRField(obj, PLUGIN_NAME, FIELD_PLAN_LAYER, command['plan_layer'])
-        # 柱頭・柱脚金物の仕様(該当金物が無ければ空文字)
-        vs.SetRField(obj, PLUGIN_NAME, FIELD_TOP_HARDWARE, command['top_hardware'])
-        vs.SetRField(obj, PLUGIN_NAME, FIELD_BOTTOM_HARDWARE, command['bottom_hardware'])
+        vs.Move3D(x, y, z_bottom)
+        vs.SetRField(obj, PLUGIN_NAME, 'MemberID', command['member_id'])
+        vs.SetRField(obj, PLUGIN_NAME, 'ProfileShape', 'Rectangle')
+        vs.SetRField(obj, PLUGIN_NAME, 'MajorBreadth', str(w))
+        vs.SetRField(obj, PLUGIN_NAME, 'MajorDepth', str(d))
+        vs.SetRField(obj, PLUGIN_NAME, 'B', str(w))
+        vs.SetRField(obj, PLUGIN_NAME, 'D', str(d))
+        vs.SetRField(obj, PLUGIN_NAME, 'MemberType', '2')
+        vs.SetRField(obj, PLUGIN_NAME, 'StructuralUse', '1')
+        vs.SetRField(obj, PLUGIN_NAME, 'AxisAlign', '1')
+        vs.SetRField(obj, PLUGIN_NAME, 'EndCondition', '3')
+        vs.SetRField(obj, PLUGIN_NAME, 'StartCondition', '3')
+        vs.SetRField(obj, PLUGIN_NAME, 'ProfileSeries', 'AISC (Inch)')
         vs.ResetObject(obj)
     else:
         # フォールバック: 断面の矩形
