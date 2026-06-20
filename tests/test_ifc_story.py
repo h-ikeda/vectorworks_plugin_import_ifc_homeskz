@@ -138,7 +138,6 @@ class TestBuildStoryCommands:
                     {'type': 'FL', 'offset': 0.0, 'layer': '1-FL'},
                     {'type': '横架材天端', 'offset': -48.0, 'layer': '1-横架材天端'},
                     {'type': '柱', 'offset': -48.0, 'layer': '1-柱'},
-                    {'type': '柱(伏図)', 'offset': -48.0, 'layer': '1-柱(伏図)'},
                 ],
             },
             {
@@ -147,7 +146,6 @@ class TestBuildStoryCommands:
                     {'type': 'FL', 'offset': 0.0, 'layer': '2-FL'},
                     {'type': '横架材天端', 'offset': -36.0, 'layer': '2-横架材天端'},
                     {'type': '柱', 'offset': -36.0, 'layer': '2-柱'},
-                    {'type': '柱(伏図)', 'offset': -36.0, 'layer': '2-柱(伏図)'},
                 ],
             },
             {
@@ -155,7 +153,6 @@ class TestBuildStoryCommands:
                 'levels': [
                     {'type': '軒高', 'offset': 0.0, 'layer': 'R-軒高'},
                     {'type': '柱', 'offset': 0.0, 'layer': 'R-柱'},
-                    {'type': '柱(伏図)', 'offset': 0.0, 'layer': 'R-柱(伏図)'},
                 ],
             },
         ]
@@ -170,7 +167,7 @@ class TestBuildStoryCommands:
         assert commands[0]['name'] == '屋根'
         assert commands[0]['suffix'] == 'R'
         level_types = [level['type'] for level in commands[0]['levels']]
-        assert level_types == ['軒高', '柱', '柱(伏図)']
+        assert level_types == ['軒高', '柱']
 
     def test_empty_ifc_returns_empty_list(self) -> None:
         assert build_story_commands(ifcopenshell.file()) == []

@@ -15,7 +15,6 @@ LEVEL_FL = 'FL'
 LEVEL_BEAM_TOP = '横架材天端'
 LEVEL_EAVES = '軒高'
 LEVEL_COLUMN = '柱'
-LEVEL_COLUMN_PLAN = '柱(伏図)'
 STORY_ROOF = '屋根'
 
 
@@ -102,8 +101,8 @@ def build_story_commands(ifc_file: ifcopenshell.file) -> list[StoryCommand]:
     """IFC のストーリから story 命令のリストを組み立てる。
 
     一般階は FL(0) と 横架材天端(負オフセット)、最上階は 軒高(0) を構造レベルとし、
-    さらに各階に柱配置用の 柱・柱(伏図) レベル(オフセットは横架材天端と同じ=最上階は軒高)
-    を加える。柱は 柱 レイヤに配置し、柱・間柱ツールの伏図記号を 柱(伏図) レイヤに描く。
+    さらに各階に柱配置用の 柱 レベル(オフセットは横架材天端と同じ=最上階は軒高)
+    を加える。柱は 柱 レイヤに梁と同じ構造材ツールで配置する。
     """
     stories = collect_stories(ifc_file)
 
@@ -126,14 +125,10 @@ def build_story_commands(ifc_file: ifcopenshell.file) -> list[StoryCommand]:
                 {'type': LEVEL_BEAM_TOP, 'offset': column_offset,
                  'layer': f'{prefix}-{LEVEL_BEAM_TOP}'},
             ]
-        # 柱を配置するレイヤと、柱・間柱ツールの伏図記号を描く伏図レイヤ。
-        # 高さは横架材天端(最上階は軒高)に揃える。
+        # 柱を配置するレイヤ。高さは横架材天端(最上階は軒高)に揃える。
         levels.append(
             {'type': LEVEL_COLUMN, 'offset': column_offset,
              'layer': f'{prefix}-{LEVEL_COLUMN}'})
-        levels.append(
-            {'type': LEVEL_COLUMN_PLAN, 'offset': column_offset,
-             'layer': f'{prefix}-{LEVEL_COLUMN_PLAN}'})
         commands.append({
             'name': story_name_for(i, is_top),
             'suffix': story_suffix_for(i, is_top),

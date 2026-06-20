@@ -4,10 +4,10 @@
 描画フェーズ(``vw`` パッケージ)が消費する JSON 直列化可能な dict。
 このモジュールは vs にも ifcopenshell にも依存しない。
 
-スキーマ (version 4):
+スキーマ (version 5):
 
     {
-        "version": 4,
+        "version": 5,
         "stories": [
             {
                 "name": "1階",            # VectorWorks のストーリ名
@@ -49,30 +49,22 @@
         ],
         "columns": [
             {
+                # 柱は梁と同じ構造材ツール (StructuralMember) で鉛直材として描く。
                 "layer": "1-柱",          # 配置先デザインレイヤ名(既存のみ・なければスキップ)
-                "plan_layer": "1-柱(伏図)", # 柱・間柱ツールの伏図記号を描く伏図レイヤ名
-                "column_type": "管柱",     # 柱・間柱ツールの種別
+                # 構造材 ID。"{幅}×{成} - {種別}" に柱頭・柱脚金物の仕様を
+                # 連結した文字列(StructuralMember の MemberID に格納する。
+                # 構造材ツールには金物専用フィールドが無いため、金物仕様は
+                # MemberID に含めて保持する)。
+                "member_id": "105×105 - 管柱 / 柱頭金物:(ろ) / 柱脚金物:(ろ)",
                 "position": [x, y],       # 配置 XY (mm, センタリング済み)
                 "width": 105.0,           # 断面幅 (mm)
                 "depth": 105.0,           # 断面成 (mm)
-                "height": 2844.0,         # 柱高さ (mm, フォールバック/Height フィールド用)
-                "elevation": 426.0,       # 配置 Z 高さ (mm, 絶対値, フォールバック用)
-                # 柱頭・柱脚金物の仕様文字列 (柱・間柱ツールの TopHard /
-                # BtmHard フィールドに格納する。該当金物が無ければ "")
-                "top_hardware": "(ろ)",    # 柱頭金物の仕様
-                "bottom_hardware": "(ろ)", # 柱脚金物の仕様
-                # 上下端の高さ基準(ストーリレベル基準)。柱・間柱ツールの
-                # SetObjectStoryBound に渡し、階高変更に追従させる。
-                "bottom_bound": {         # 高さ基準(下): 該当階の横架材天端
-                    "story": 0,           # boundStory: 0=当該階, 1=上階, -1=下階
-                    "level": "横架材天端",  # layerLevelType (ストーリレベルタイプ名)
-                    "offset": 1.0         # そのレベルからのオフセット (mm)
-                },
-                "top_bound": {            # 高さ基準(上): 上階の横架材天端 or 軒高
-                    "story": 1,
-                    "level": "横架材天端",
-                    "offset": -200.0
-                }
+                "height": 2844.0,         # 柱高さ (mm, 鉛直パス長 = 上端 − 下端)
+                "elevation": 426.0,       # 柱下端の Z 高さ (mm, 絶対値)
+                # 柱頭・柱脚金物の仕様文字列(該当金物が無ければ "")。member_id
+                # にも連結されるが、構造化された記録として個別にも保持する。
+                "top_hardware": "柱頭金物:(ろ)",    # 柱頭金物の仕様
+                "bottom_hardware": "柱脚金物:(ろ)"  # 柱脚金物の仕様
             }
         ]
     }
@@ -82,7 +74,7 @@ from __future__ import annotations
 import json
 from typing import Any, TypedDict
 
-DOCUMENT_VERSION = 4
+DOCUMENT_VERSION = 5
 
 
 class LevelCommand(TypedDict):
@@ -131,30 +123,21 @@ class MemberCommand(TypedDict):
     end_elevation: float
 
 
-class StoryBound(TypedDict):
-    """柱の上端/下端の高さ基準(ストーリレベル基準)。
+class ColumnCommand(TypedDict):
+    """柱 (StructuralMember オブジェクト) を鉛直材として描画する命令。
 
-    VW の SetObjectStoryBound(boundType=2 / Story) に対応する。
+    柱は梁と同じ構造材ツールで描く。下端 (elevation) から高さ (height) 分の
+    鉛直パスを持ち、断面は width×depth。member_id は構造材 ID で、柱頭・柱脚
+    金物の仕様も連結して保持する(構造材ツールに金物専用フィールドが無いため)。
     """
 
-    story: int  # boundStory: 0=当該階, 1=上階, -1=下階
-    level: str  # layerLevelType (ストーリレベルタイプ名)
-    offset: float  # 指定レベルからのオフセット (mm)
-
-
-class ColumnCommand(TypedDict):
-    """柱 (柱・間柱 オブジェクト) を描画する命令。"""
-
     layer: str
-    plan_layer: str
-    column_type: str
+    member_id: str
     position: list[float]
     width: float
     depth: float
     height: float
     elevation: float
-    bottom_bound: StoryBound
-    top_bound: StoryBound
     top_hardware: str
     bottom_hardware: str
 
@@ -247,28 +230,13 @@ def _validate_member(index: int, command: Any) -> None:
                  f'{where}.{key} は数値である必要があります')
 
 
-def _validate_story_bound(where: str, bound: Any) -> None:
-    _require(isinstance(bound, dict), f'{where} は dict である必要があります')
-    _require(isinstance(bound.get('story'), int) and not isinstance(bound.get('story'), bool),
-             f'{where}.story は整数である必要があります')
-    # boundStory はスキーマ上 -1(下階)/0(当該階)/1(上階) のみ
-    _require(bound['story'] in (-1, 0, 1),
-             f'{where}.story は -1, 0, 1 のいずれかである必要があります')
-    _require(isinstance(bound.get('level'), str) and bound['level'],
-             f'{where}.level は非空文字列である必要があります')
-    _require(_is_number(bound.get('offset')),
-             f'{where}.offset は数値である必要があります')
-
-
 def _validate_column(index: int, command: Any) -> None:
     where = f'columns[{index}]'
     _require(isinstance(command, dict), f'{where} は dict である必要があります')
     _require(isinstance(command.get('layer'), str) and command['layer'],
              f'{where}.layer は非空文字列である必要があります')
-    _require(isinstance(command.get('plan_layer'), str) and command['plan_layer'],
-             f'{where}.plan_layer は非空文字列である必要があります')
-    _require(isinstance(command.get('column_type'), str) and command['column_type'],
-             f'{where}.column_type は非空文字列である必要があります')
+    _require(isinstance(command.get('member_id'), str),
+             f'{where}.member_id は文字列である必要があります')
     _require(_is_point(command.get('position')),
              f'{where}.position は [x, y] の数値ペアである必要があります')
     for key in ('width', 'depth', 'height', 'elevation'):
@@ -277,9 +245,6 @@ def _validate_column(index: int, command: Any) -> None:
     for key in ('top_hardware', 'bottom_hardware'):
         _require(isinstance(command.get(key), str),
                  f'{where}.{key} は文字列である必要があります')
-    for key in ('bottom_bound', 'top_bound'):
-        _require(key in command, f'{where}.{key} は必須です')
-        _validate_story_bound(f'{where}.{key}', command[key])
 
 
 def validate_document(document: Any) -> Document:
