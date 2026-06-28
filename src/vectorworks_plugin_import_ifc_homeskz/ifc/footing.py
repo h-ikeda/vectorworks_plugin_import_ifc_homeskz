@@ -22,7 +22,7 @@
 from __future__ import annotations
 
 import math
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Optional
 
 from ..document import SlabCommand, StoryBoundCommand, StoryCommand, WallCommand
 from .grid import resolve_lines
@@ -126,9 +126,12 @@ def _compose(element: _Placement, item: _Placement) -> _Placement:
     return _add(oe, apply_re(oi)), apply_re(ix), apply_re(iy), apply_re(iz)
 
 
-# 押し出しソリッドのワールド情報
+# 押し出しソリッドのワールド情報。
+# 注: モジュールレベルの型エイリアス代入は実行時に評価されるため、PEP 604 の
+# ``X | None`` ではなく ``Optional[...]`` を使う(Python 3.9 では実行時の ``|``
+# 合成が未対応で mypy も無効なエイリアスとして拒否するため)。
 _Solid = tuple[_Placement, _Vec, float, list[tuple[float, float]],
-               tuple[float, float] | None]
+               Optional[tuple[float, float]]]
 
 
 def _base_extruded_solid(
