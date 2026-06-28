@@ -4,10 +4,10 @@
 描画フェーズ(``vw`` パッケージ)が消費する JSON 直列化可能な dict。
 このモジュールは vs にも ifcopenshell にも依存しない。
 
-スキーマ (version 8):
+スキーマ (version 9):
 
     {
-        "version": 8,
+        "version": 9,
         "stories": [
             {
                 "name": "1階",            # VectorWorks のストーリ名
@@ -92,6 +92,35 @@
                 "top_hardware": "柱頭金物:(ろ)",    # 柱頭金物の仕様
                 "bottom_hardware": "柱脚金物:(ろ)"  # 柱脚金物の仕様
             }
+        ],
+        "walls": [
+            {
+                # 基礎の立上り(基礎梁、IfcFooting)。壁オブジェクトで描く。
+                "layer": "F-立上り",       # 配置先デザインレイヤ名(既存のみ・なければスキップ)
+                "class": "04構造-01基礎-03立ち上がり",  # 割り当てるクラス名
+                "start": [x1, y1],        # 壁芯の始点 (mm, センタリング済み)
+                "end": [x2, y2],          # 壁芯の終点 (mm, センタリング済み)
+                "thickness": 120.0,       # 壁厚 (mm)
+                # 高さ基準(ストーリレベルへのバインド)。下端は基礎(自階)の GL、
+                # 上端は 1 階(上階)の横架材天端にバインドする。offset は IFC 実形状
+                # (壁の下端/上端の絶対 Z)とバインド先レベルの絶対 Z の差。
+                "bottom_bound": {"story_offset": 0, "level": "GL", "offset": -100.0},
+                "top_bound": {"story_offset": 1, "level": "横架材天端", "offset": -190.0}
+            }
+        ],
+        "slabs": [
+            {
+                # 基礎の底盤・地中梁(IfcSlab/IfcFooting)。スラブオブジェクトで描く。
+                "layer": "F-底盤",         # 配置先デザインレイヤ名(既存のみ・なければスキップ)
+                "class": "04構造-01基礎-02基礎スラブ",  # 割り当てるクラス名
+                # スラブ外形(平面ポリゴンの頂点列、mm・センタリング済み)。
+                "boundary": [[x1, y1], [x2, y2], [x3, y3], [x4, y4]],
+                "thickness": 150.0,       # スラブ厚 (mm)。スラブは基準面(天端)から下方に伸びる。
+                # 高さ基準(ストーリレベルへのバインド)。スラブ天端を基礎の底盤天端
+                # レベルにバインドする。offset は天端の絶対 Z と底盤天端の絶対 Z の差
+                # (主たる底盤は ≈0、地中梁は底盤天端より低いため負値)。
+                "bound": {"story_offset": 0, "level": "底盤天端", "offset": 0.0}
+            }
         ]
     }
 """
@@ -100,7 +129,7 @@ from __future__ import annotations
 import json
 from typing import Any, TypedDict
 
-DOCUMENT_VERSION = 8
+DOCUMENT_VERSION = 9
 
 
 class LevelCommand(TypedDict):
@@ -196,6 +225,41 @@ end_bound でストーリレベルにバインドする(構造用途は柱)。cl
 """
 
 
+# 'class' キーが Python の予約語のため functional 構文で定義する(GridCommand と同様)
+WallCommand = TypedDict('WallCommand', {
+    'layer': str,
+    'class': str,
+    'start': list[float],
+    'end': list[float],
+    'thickness': float,
+    'bottom_bound': StoryBoundCommand,
+    'top_bound': StoryBoundCommand,
+})
+"""基礎の立上り(基礎梁)を壁オブジェクトで描画する命令。
+
+start/end は壁芯、thickness は壁厚。bottom_bound / top_bound は壁の下端/上端の
+高さ基準で、下端は基礎(自階)の GL、上端は 1 階(上階)の横架材天端にバインドする。
+class は割り当てる構造クラス名(立ち上がり)。
+"""
+
+
+# 'class' キーが Python の予約語のため functional 構文で定義する(GridCommand と同様)
+SlabCommand = TypedDict('SlabCommand', {
+    'layer': str,
+    'class': str,
+    'boundary': list[list[float]],
+    'thickness': float,
+    'bound': StoryBoundCommand,
+})
+"""基礎の底盤・地中梁をスラブオブジェクトで描画する命令。
+
+boundary はスラブ外形(平面ポリゴンの頂点列)、thickness はスラブ厚。スラブは
+基準面(天端)から下方に thickness 分伸びる。bound はスラブ天端の高さ基準で、
+基礎の底盤天端レベルにバインドする(地中梁は底盤天端より低いため offset が負値)。
+class は割り当てる構造クラス名(基礎スラブ)。
+"""
+
+
 class Document(TypedDict):
     """両フェーズを接続する命令セット全体。"""
 
@@ -204,6 +268,8 @@ class Document(TypedDict):
     grids: list[GridCommand]
     members: list[MemberCommand]
     columns: list[ColumnCommand]
+    walls: list[WallCommand]
+    slabs: list[SlabCommand]
 
 
 class DocumentValidationError(ValueError):
@@ -309,6 +375,41 @@ def _validate_column(index: int, command: Any) -> None:
                  f'{where}.{key} は文字列である必要があります')
 
 
+def _validate_wall(index: int, command: Any) -> None:
+    where = f'walls[{index}]'
+    _require(isinstance(command, dict), f'{where} は dict である必要があります')
+    _require(isinstance(command.get('layer'), str) and command['layer'],
+             f'{where}.layer は非空文字列である必要があります')
+    _require(isinstance(command.get('class'), str) and command['class'],
+             f'{where}.class は非空文字列である必要があります')
+    _require(_is_point(command.get('start')),
+             f'{where}.start は [x, y] の数値ペアである必要があります')
+    _require(_is_point(command.get('end')),
+             f'{where}.end は [x, y] の数値ペアである必要があります')
+    _require(_is_number(command.get('thickness')),
+             f'{where}.thickness は数値である必要があります')
+    for key in ('bottom_bound', 'top_bound'):
+        _validate_story_bound(where, key, command.get(key))
+
+
+def _validate_slab(index: int, command: Any) -> None:
+    where = f'slabs[{index}]'
+    _require(isinstance(command, dict), f'{where} は dict である必要があります')
+    _require(isinstance(command.get('layer'), str) and command['layer'],
+             f'{where}.layer は非空文字列である必要があります')
+    _require(isinstance(command.get('class'), str) and command['class'],
+             f'{where}.class は非空文字列である必要があります')
+    boundary = command.get('boundary')
+    _require(isinstance(boundary, list) and len(boundary) >= 3,
+             f'{where}.boundary は 3 点以上の頂点リストである必要があります')
+    for j, point in enumerate(boundary):
+        _require(_is_point(point),
+                 f'{where}.boundary[{j}] は [x, y] の数値ペアである必要があります')
+    _require(_is_number(command.get('thickness')),
+             f'{where}.thickness は数値である必要があります')
+    _validate_story_bound(where, 'bound', command.get('bound'))
+
+
 def _validate_story_bound(where: str, key: str, bound: Any) -> None:
     field = f'{where}.{key}'
     _require(isinstance(bound, dict), f'{field} は dict である必要があります')
@@ -326,7 +427,7 @@ def validate_document(document: Any) -> Document:
     _require(isinstance(document, dict), '命令セットは dict である必要があります')
     _require(document.get('version') == DOCUMENT_VERSION,
              f'未対応の命令セットバージョンです: {document.get("version")!r}')
-    for key in ('stories', 'grids', 'members', 'columns'):
+    for key in ('stories', 'grids', 'members', 'columns', 'walls', 'slabs'):
         _require(isinstance(document.get(key), list),
                  f'"{key}" はリストである必要があります')
     for i, command in enumerate(document['stories']):
@@ -337,6 +438,10 @@ def validate_document(document: Any) -> Document:
         _validate_member(i, command)
     for i, command in enumerate(document['columns']):
         _validate_column(i, command)
+    for i, command in enumerate(document['walls']):
+        _validate_wall(i, command)
+    for i, command in enumerate(document['slabs']):
+        _validate_slab(i, command)
     try:
         # スキーマ検証だけでは未知キー配下の非直列化値を検出できないため、
         # JSON 直列化可能性も明示的に検証する (NaN/Infinity も拒否)

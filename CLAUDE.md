@@ -13,6 +13,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 - 横架材（土台・梁・桁）のインポート
 - 柱（管柱・小屋束等）のインポート
 - 柱・横架材への構造クラス（`04構造-02木造-…`）の自動割り当て
+- 基礎（立上り＝壁オブジェクト・底盤/地中梁＝スラブオブジェクト）のインポートと基礎ストーリの自動生成
 
 今後以下の要素のインポートも追加する予定です。
 
@@ -25,7 +26,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 1. **IFC 解析フェーズ（`ifc` サブパッケージ）** — `vs` に一切依存しない。ifcopenshell で IFC を解析し、描くべきオブジェクトを命令セット（dict）として組み立てる。通常の Python 環境で単体実行・検証できる。
 2. **描画フェーズ（`vw` サブパッケージ）** — `vs` だけに依存し、IFC・ifcopenshell の知識を持たない。命令セットを検証（`validate_document`）してから vs API で描画する。
 
-命令セットのスキーマ（version・stories/grids/members 各命令の形式）は `document.py` の docstring に定義されている。スキーマを変更するときは `DOCUMENT_VERSION` の互換性に注意し、`validate_document()` とテストも併せて更新すること。`run()` は両フェーズの間で `json.dumps`/`json.loads` を通すため、命令セットに直列化不能なオブジェクト（ifcopenshell エンティティや vs ハンドル等）を入れてはならない。
+命令セットのスキーマ（version・stories/grids/members/columns/walls/slabs 各命令の形式）は `document.py` の docstring に定義されている。スキーマを変更するときは `DOCUMENT_VERSION` の互換性に注意し、`validate_document()` とテストも併せて更新すること。`run()` は両フェーズの間で `json.dumps`/`json.loads` を通すため、命令セットに直列化不能なオブジェクト（ifcopenshell エンティティや vs ハンドル等）を入れてはならない。
 
 ## パッケージ構造
 
@@ -36,10 +37,12 @@ src/
         document.py           # 命令セットのスキーマ定義・検証 (vs / ifcopenshell 非依存)
         ifc/                  # フェーズ1: IFC 解析 (vs 非依存)
             __init__.py       # build_document(ifc_file) -> dict
+            loader.py         # open_ifc(path): 解析前にスキーマ非適合エンティティを除去して開く
             grid.py           # 通り芯 (IfcGridAxis) → grid 命令
             story.py          # ストーリ (IfcBuildingStorey) → story 命令
             member.py         # 横架材 (IfcBeam/IfcMember) → member 命令
             column.py         # 柱 (IfcColumn) → column 命令
+            footing.py        # 基礎 (IfcFooting/IfcSlab) → wall/slab 命令・基礎ストーリ
             structural_class.py  # 柱・横架材の構造クラス判定 (クラス名定義・割り当てロジック)
         vw/                   # フェーズ2: VectorWorks 描画 (vs 依存)
             __init__.py       # execute_document(document) -> 実行数 dict
@@ -47,6 +50,7 @@ src/
             story.py          # story 命令 → ストーリ・レベル・レイヤ
             member.py         # member 命令 → 構造材オブジェクト
             column.py         # column 命令 → 柱(構造材オブジェクト)
+            footing.py        # wall 命令 → 壁オブジェクト・slab 命令 → スラブオブジェクト
 main.py                      # VectorWorks から呼び出すラッパースクリプト (実行時に自動インストール・更新)
 tests/                       # pytest 用テスト (CI は vs.py スタブを GitHub からダウンロード)
 pyproject.toml               # パッケージメタデータ
@@ -59,7 +63,7 @@ pyproject.toml               # パッケージメタデータ
 すべての関数・メソッド（テストコード・モック用クロージャ含む）に引数と戻り値の型注釈を付ける。型検査は mypy で行い、CI で `mypy` を実行する（設定は `pyproject.toml` の `[tool.mypy]`、`disallow_untyped_defs` 有効）。
 
 - 各モジュール先頭に `from __future__ import annotations` を置く。Python 3.9 互換を保ちつつ `list[str]` / `X | None` 構文を使うため。
-- 命令セットの型は `document.py` の `TypedDict`（`Document` / `StoryCommand` / `GridCommand` / `MemberCommand` / `ColumnCommand` / `LevelCommand`）を使う。`GridCommand` / `MemberCommand` / `ColumnCommand` は `class` キー（構造クラス名）が予約語のため functional 構文で定義している。スキーマ変更時は `TypedDict` 定義・docstring・`validate_document()` を同時に更新すること。
+- 命令セットの型は `document.py` の `TypedDict`（`Document` / `StoryCommand` / `GridCommand` / `MemberCommand` / `ColumnCommand` / `WallCommand` / `SlabCommand` / `LevelCommand` / `StoryBoundCommand`）を使う。`GridCommand` / `MemberCommand` / `ColumnCommand` / `WallCommand` / `SlabCommand` は `class` キー（構造クラス名）が予約語のため functional 構文で定義している。スキーマ変更時は `TypedDict` 定義・docstring・`validate_document()` を同時に更新すること。
 - `ifc` サブパッケージでは ifcopenshell の型（`ifcopenshell.file` / `ifcopenshell.entity_instance`）を注釈にのみ使う場合 `if TYPE_CHECKING:` ブロックで import する。
 - `vs` モジュールは型スタブが存在しないため `ignore_missing_imports` で許容し、vs ハンドルは `Any` で扱う。VectorWorks 公式 `vs.py` スタブ（`tests/vs.py`）は型検査対象から除外している。
 - 検証前の命令セット（JSON 由来の信頼できない入力）を受ける関数（`validate_document()` / `execute_document()`）の引数は `Any` とし、検証済みの値だけを `Document` 型として扱う。
@@ -83,15 +87,17 @@ Python Externals フォルダのパスは OS・VectorWorks のバージョンに
 
 IFC の解析には **`ifcopenshell`** を利用します。生の STEP テキストの正規表現マッチではなく、エンティティと属性を辿る形でデータを抽出します。
 
+ただし**読み込み時のサニタイズ**は例外的にテキスト処理を行います（`ifc/loader.py` の `open_ifc`）。ホームズ君 EX の IFC2X3 出力には IFC4 でのみ定義される `IfcFootingType`（STEP の `IFCFOOTINGTYPE`）が混入しており、Python 3.9 で唯一解決される `ifcopenshell==0.8.4.post1` はこの不正エンティティにつまずいて周辺の正常な `IfcFooting`・`IfcSlab` まで取りこぼす（基礎が 1 件しか読めない）。`open_ifc` は解析前にスキーマ非適合のエンティティ行を除去してから `ifcopenshell.file.from_string` で開くことで、どの ifcopenshell / Python バージョンでも基礎が正しく読まれるようにする（除去対象は基礎の型エンティティのみで、本スクリプトは `IfcFooting` の型を参照しないため抽出結果に影響しない）。`run()` とテストのフィクスチャ読込はこの `open_ifc` を経由する。
+
 ## スクリプトの処理フロー
 
 `vectorworks_plugin_import_ifc_homeskz.run()` は以下の順で処理を行います。
 
 1. **ファイル選択** — `vs.GetFileN()` でファイルダイアログを開き `.ifc` を選択。
-2. **IFC オープン** — `ifcopenshell.open(filepath)` でファイルを読み込む。
+2. **IFC オープン** — `open_ifc(filepath)`（`ifc/loader.py`）でファイルを読み込む。解析前にスキーマ非適合のエンティティを除去する（基礎の取りこぼし防止、下記「IFC 解析の方針」参照）。
 3. **解析（フェーズ1）** — `ifc.build_document(ifc_file)` で JSON 命令セットを組み立てる。
 4. **JSON 経由の受け渡し** — `json.dumps` → `json.loads` を通し直列化可能性を保証。
-5. **描画（フェーズ2）** — `vw.execute_document(document)` が検証後、ストーリ → 通り芯 → 構造材 → 柱の順で描画し、最後にデザインレイヤのスタック順を `reorder_story_layers` で整えて実行数を返す。
+5. **描画（フェーズ2）** — `vw.execute_document(document)` が検証後、ストーリ → 通り芯 → 構造材 → 柱 → 立上り（壁）→ 底盤/地中梁（スラブ）の順で描画し、最後にデザインレイヤのスタック順を `reorder_story_layers` で整えて実行数を返す。
 6. **完了ダイアログ** — `vs.AlrtDialog` で結果を表示。
 
 ### 通り芯（ifc/grid.py → vw/grid.py）
@@ -141,6 +147,22 @@ VW 2026 でレイヤをストーリレベルに正しくバインドするには
 
 ストーリ作成順序: `CreateStory` → `SetStoryElevationN` を 1 ストーリ毎に実行してから次のストーリへ。`SetStoryElevation` を後回しにすると全ストーリが既定高さ 0 で衝突して 2 階以降の `CreateStory` が失敗する。
 
+基礎要素が存在する場合、`build_document` は `ifc/footing.py` の `build_foundation_story_command` が返す **基礎ストーリ** を stories の**先頭**（最下層）に追加する（`build_story_commands` が返す FL 階は変更しない）。基礎ストーリは `name=基礎`・`suffix=F`・`elevation=0`（GL は常に 0）で、レベルは `GL`(0、`F-立上り` レイヤ) と `底盤天端`（底盤天端の絶対 Z、`F-底盤` レイヤ）の 2 つ。`levels` の並びは立上りを底盤の上に積むため `GL` を先頭にする。Elevation=0 で最下層になり、`reorder_story_layers` の希望スタック順（最上階→最下階）でも最下段に積まれるため、`1-横架材天端` の下に `F-立上り`・`F-底盤` が並ぶ。
+
+### 基礎（ifc/footing.py → vw/footing.py）
+
+ホームズ君 IFC の基礎要素（`IfcFooting` と基礎底盤の `IfcSlab`）を `Name` で 3 種に分類し、別オブジェクトに変換する。座標は通り芯・横架材と同じグリッド中心オフセットで補正する。配置先レイヤが存在しない命令はスキップする。
+
+- **立上り（基礎梁、`Name` が `基礎梁` 始まり）→ 壁オブジェクト（wall 命令、`F-立上り` レイヤ）**。矩形断面の幅を壁厚、背を壁高とし、壁芯は配置原点から押し出し方向の線。下端は基礎（自階）の `GL`(`story_offset=0`)、上端は 1 階（上階）の `横架材天端`(`story_offset=1`)にバインドする。`offset` は実形状の下端/上端の絶対 Z とバインド先レベルの絶対 Z（1 階横架材天端 = `1FL Elevation + resolve_beam_top_offset(1FL)`）の差。描画は `vs.DoubLines`(壁厚)→`vs.Wall`(壁芯)→`SetObjectStoryBound`(下端=0/上端=1、`boundType=2`=Story)。壁が作れない場合は壁芯の直線にフォールバック。
+- **底盤（基礎底盤・布基礎底盤・独立基礎底盤、`Name` に `底盤` を含む）→ スラブオブジェクト（slab 命令、`F-底盤` レイヤ）**。平面外形を底盤天端レベルにバインドし、`offset` は実天端 Z と底盤天端の絶対 Z の差（主たる底盤は ≈0）。
+- **地中梁（地中梁・部分地中梁、`Name` に `地中梁` を含む）→ スラブオブジェクト（slab 命令、`F-底盤` レイヤ）**。底盤の下にぶら下がるため実形状どおり底盤天端より低い天端にバインドする（`offset` が負値）。これにより底盤スラブと噛み合う。
+- 描画は外形ポリゴンを作り `vs.CreateSlab`(profile)→`vs.SetSlabHeight`(厚み)→`SetObjectStoryBound`(天端=0、`底盤天端`)。スラブが作れない場合は外形ポリゴンにフォールバック。
+- **構造クラス**: 立上り=`04構造-01基礎-03立ち上がり`、底盤・地中梁=`04構造-01基礎-02基礎スラブ`。`SetClass` で設定する（存在しないクラスは VW が自動生成）。
+
+**底盤天端レベルの高さ**（`resolve_slab_top_elevation`）は、底盤（`底盤` を含む要素）の天端 Z ごとに平面面積を合計し、合計面積が最大の天端 Z を採用する（例: 大半の基礎底盤の天端 50.0、独立基礎底盤など少数の異なる高さは採用されない）。エンティティ列挙順に依存しない決定的な高さにするため最初に見つかった値ではなく面積最大の Z を使う。
+
+**押し出しソリッドのワールド変換**: 底盤は鉛直押し出し（プロファイルがそのまま平面外形）だが、立上り・地中梁・布基礎底盤は水平押し出し（プロファイルが鉛直面内）。`_world_solid` が要素配置とアイテム配置（`IfcExtrudedAreaSolid.Position`）を合成した行列でワールド座標に変換し、押し出し方向の Z 成分が鉛直か水平かで平面外形の求め方を分ける（鉛直＝プロファイル多角形、水平＝断面の水平幅を押し出し方向に掃引した矩形）。端部が他材で削られた要素は `IfcBooleanResult`（差演算）で表されるため、第 1 オペランドの素のソリッドを辿る（削り分だけ長めになるが取り逃すよりは妥当）。非矩形断面の立上りは壁厚が定まらないためスキップする。
+
 ## VectorWorks のレイヤとクラスの規則
 
 - **通り芯のレイヤ**: すべて `共通` レイヤに配置。存在しない場合はスクリプトが自動作成。
@@ -153,6 +175,7 @@ VW 2026 でレイヤをストーリレベルに正しくバインドするには
   - **IFC 記録を信用する**: ホームズ君 IFC の `Name` には種別が埋め込まれる（`木梁:{種別}:{連番}` / `小屋束:…`、`STANDCOLUMN`）。横架材は `Name` 中央の種別トークンを `_MEMBER_CLASS_BY_TYPE` で直接クラスに対応付ける（`土台`→土台、`大引`→大引、`根太`→根太、`軒桁`→軒桁、`胴差`→胴差、`床小梁`/`床大梁`/`甲乙梁`→床梁、`小屋梁`→小屋梁、`母屋`→母屋、`棟木`→棟木）。柱は `ObjectType=STANDCOLUMN` または `Name` が `小屋束` 始まりなら小屋束。
   - **判別できないときは状況で推定する**（火打・隅木谷木・無名等）。横架材: 最下階=土台、中間階=床梁、最上階の軒高付近=小屋梁、軒高より高い（`above_eaves`＝天端が配置レイヤ高さを超える）=母屋。柱: 最上階の柱=小屋束、一般階は上下端の高さで判断し**上階の床（次階 FL）を貫けば通し柱、1 階分で止まれば管柱**（`is_through_column`、貫通判定の許容値 `THROUGH_COLUMN_TOL`）。
   - クラスは構造種別のみを表し、`member_id` の種別表記（柱の `管柱`/`小屋束` 等）とは独立。`member_id` は従来どおり `resolve_column_type`（通し柱を区別しない）で組み立てる。
+- **基礎のクラス**（`ifc/footing.py`）: 立上り（壁）=`04構造-01基礎-03立ち上がり`、底盤・地中梁（スラブ）=`04構造-01基礎-02基礎スラブ`。命令の `class` に格納し、描画フェーズ（`vw/footing.py`）が `vs.SetClass` で設定する。
 
 ## 開発プロセス: PR 作成と監視
 
