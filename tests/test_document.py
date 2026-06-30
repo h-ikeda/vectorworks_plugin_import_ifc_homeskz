@@ -62,6 +62,22 @@ def make_valid_document() -> dict[str, Any]:
                 'top_hardware': '柱頭金物:(ろ)', 'bottom_hardware': '柱脚金物:(ろ)',
             },
         ],
+        'walls': [
+            {
+                'layer': 'F-立上り', 'class': '04構造-01基礎-03立ち上がり',
+                'start': [0.0, 0.0], 'end': [3000.0, 0.0], 'thickness': 120.0,
+                'bottom_bound': {'story_offset': 0, 'level': 'GL', 'offset': -100.0},
+                'top_bound': {'story_offset': 1, 'level': '横架材天端', 'offset': -190.0},
+            },
+        ],
+        'slabs': [
+            {
+                'layer': 'F-底盤', 'class': '04構造-01基礎-02基礎スラブ',
+                'boundary': [[0.0, 0.0], [3000.0, 0.0], [3000.0, 2000.0], [0.0, 2000.0]],
+                'thickness': 150.0,
+                'bound': {'story_offset': 0, 'level': '底盤天端', 'offset': 0.0},
+            },
+        ],
     }
 
 
@@ -76,7 +92,7 @@ class TestValidateDocument:
 
     def test_empty_command_lists_pass(self) -> None:
         document = {'version': DOCUMENT_VERSION, 'stories': [], 'grids': [],
-                    'members': [], 'columns': []}
+                    'members': [], 'columns': [], 'walls': [], 'slabs': []}
         validate_document(document)
 
     def test_rejects_non_dict(self) -> None:
@@ -95,7 +111,8 @@ class TestValidateDocument:
         with pytest.raises(DocumentValidationError):
             validate_document(document)
 
-    @pytest.mark.parametrize('key', ['stories', 'grids', 'members', 'columns'])
+    @pytest.mark.parametrize('key', ['stories', 'grids', 'members', 'columns',
+                                     'walls', 'slabs'])
     def test_rejects_missing_command_list(self, key: str) -> None:
         document = make_valid_document()
         del document[key]
@@ -215,6 +232,66 @@ class TestValidateDocument:
         document = make_valid_document()
         document['columns'][0]['start_bound']['story_offset'] = 1.5
         with pytest.raises(DocumentValidationError, match='story_offset'):
+            validate_document(document)
+
+    def test_rejects_wall_without_thickness(self) -> None:
+        document = make_valid_document()
+        del document['walls'][0]['thickness']
+        with pytest.raises(DocumentValidationError, match='thickness'):
+            validate_document(document)
+
+    def test_rejects_wall_without_class(self) -> None:
+        document = make_valid_document()
+        del document['walls'][0]['class']
+        with pytest.raises(DocumentValidationError, match='class'):
+            validate_document(document)
+
+    def test_rejects_wall_with_bad_point(self) -> None:
+        document = make_valid_document()
+        document['walls'][0]['end'] = [0.0]
+        with pytest.raises(DocumentValidationError, match='end'):
+            validate_document(document)
+
+    def test_rejects_wall_without_top_bound(self) -> None:
+        document = make_valid_document()
+        del document['walls'][0]['top_bound']
+        with pytest.raises(DocumentValidationError, match='top_bound'):
+            validate_document(document)
+
+    def test_rejects_wall_with_bad_bound_level(self) -> None:
+        document = make_valid_document()
+        document['walls'][0]['bottom_bound']['level'] = ''
+        with pytest.raises(DocumentValidationError, match='bottom_bound.level'):
+            validate_document(document)
+
+    def test_rejects_slab_without_thickness(self) -> None:
+        document = make_valid_document()
+        del document['slabs'][0]['thickness']
+        with pytest.raises(DocumentValidationError, match='thickness'):
+            validate_document(document)
+
+    def test_rejects_slab_without_class(self) -> None:
+        document = make_valid_document()
+        del document['slabs'][0]['class']
+        with pytest.raises(DocumentValidationError, match='class'):
+            validate_document(document)
+
+    def test_rejects_slab_with_too_few_boundary_points(self) -> None:
+        document = make_valid_document()
+        document['slabs'][0]['boundary'] = [[0.0, 0.0], [1.0, 0.0]]
+        with pytest.raises(DocumentValidationError, match='boundary'):
+            validate_document(document)
+
+    def test_rejects_slab_with_bad_boundary_point(self) -> None:
+        document = make_valid_document()
+        document['slabs'][0]['boundary'] = [[0.0, 0.0], [1.0, 0.0], [0.0]]
+        with pytest.raises(DocumentValidationError, match='boundary'):
+            validate_document(document)
+
+    def test_rejects_slab_with_bad_bound_level(self) -> None:
+        document = make_valid_document()
+        document['slabs'][0]['bound']['level'] = ''
+        with pytest.raises(DocumentValidationError, match='bound.level'):
             validate_document(document)
 
     def test_rejects_non_json_serializable_value(self) -> None:

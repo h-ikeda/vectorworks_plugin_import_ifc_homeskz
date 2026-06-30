@@ -81,6 +81,7 @@ def _make_stateful_vs_mock() -> MagicMock:
     vs_mock.GetLayerForStory.return_value = 'HANDLE_template_layer'
     vs_mock.LNewObj.return_value = object()
     vs_mock.CreateCustomObjectPath.return_value = object()
+    vs_mock.CreateSlab.return_value = object()
     return vs_mock
 
 
@@ -89,12 +90,14 @@ def _run_execute_document(vs_mock: MagicMock, document: dict[str, Any]) -> dict[
         import vectorworks_plugin_import_ifc_homeskz.vw as vw
         import vectorworks_plugin_import_ifc_homeskz.vw.column as vw_column
         import vectorworks_plugin_import_ifc_homeskz.vw.grid as vw_grid
+        import vectorworks_plugin_import_ifc_homeskz.vw.footing as vw_footing
         import vectorworks_plugin_import_ifc_homeskz.vw.member as vw_member
         import vectorworks_plugin_import_ifc_homeskz.vw.story as vw_story
         importlib.reload(vw_grid)
         importlib.reload(vw_member)
         importlib.reload(vw_story)
         importlib.reload(vw_column)
+        importlib.reload(vw_footing)
         importlib.reload(vw)
         return vw.execute_document(document)
 
@@ -104,6 +107,13 @@ def make_document() -> dict[str, Any]:
     return {
         'version': DOCUMENT_VERSION,
         'stories': [
+            {
+                'name': '基礎', 'suffix': 'F', 'elevation': 0.0,
+                'levels': [
+                    {'type': 'GL', 'offset': 0.0, 'layer': 'F-立上り'},
+                    {'type': '底盤天端', 'offset': 50.0, 'layer': 'F-底盤'},
+                ],
+            },
             {
                 'name': '1階', 'suffix': '1', 'elevation': 473.0,
                 'levels': [
@@ -140,6 +150,18 @@ def make_document() -> dict[str, Any]:
              'end_bound': {'story_offset': 1, 'level': '軒高', 'offset': 0.0},
              'top_hardware': '', 'bottom_hardware': ''},
         ],
+        'walls': [
+            {'layer': 'F-立上り', 'class': '04構造-01基礎-03立ち上がり',
+             'start': [0.0, 0.0], 'end': [3000.0, 0.0], 'thickness': 120.0,
+             'bottom_bound': {'story_offset': 0, 'level': 'GL', 'offset': -100.0},
+             'top_bound': {'story_offset': 1, 'level': '横架材天端', 'offset': -190.0}},
+        ],
+        'slabs': [
+            {'layer': 'F-底盤', 'class': '04構造-01基礎-02基礎スラブ',
+             'boundary': [[0.0, 0.0], [3000.0, 0.0], [3000.0, 2000.0], [0.0, 2000.0]],
+             'thickness': 150.0,
+             'bound': {'story_offset': 0, 'level': '底盤天端', 'offset': 0.0}},
+        ],
     }
 
 
@@ -147,14 +169,16 @@ class TestExecuteDocument:
     def test_executes_all_commands_and_returns_counts(self) -> None:
         vs_mock = _make_stateful_vs_mock()
         counts = _run_execute_document(vs_mock, make_document())
-        assert counts == {'stories': 2, 'grids': 1, 'members': 1, 'columns': 1}
+        assert counts == {'stories': 3, 'grids': 1, 'members': 1, 'columns': 1,
+                          'walls': 1, 'slabs': 1}
 
     def test_empty_document_returns_zero_counts(self) -> None:
         vs_mock = _make_stateful_vs_mock()
         document = {'version': DOCUMENT_VERSION, 'stories': [], 'grids': [],
-                    'members': [], 'columns': []}
+                    'members': [], 'columns': [], 'walls': [], 'slabs': []}
         counts = _run_execute_document(vs_mock, document)
-        assert counts == {'stories': 0, 'grids': 0, 'members': 0, 'columns': 0}
+        assert counts == {'stories': 0, 'grids': 0, 'members': 0, 'columns': 0,
+                          'walls': 0, 'slabs': 0}
 
     def test_rejects_unsupported_version_before_drawing(self) -> None:
         vs_mock = _make_stateful_vs_mock()

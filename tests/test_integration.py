@@ -26,7 +26,7 @@ import ifcopenshell
 import pytest
 
 from vectorworks_plugin_import_ifc_homeskz.document import Document, validate_document
-from vectorworks_plugin_import_ifc_homeskz.ifc import build_document
+from vectorworks_plugin_import_ifc_homeskz.ifc import build_document, open_ifc
 
 FIXTURES_DIR = os.path.join(os.path.dirname(__file__), 'fixtures')
 
@@ -43,6 +43,8 @@ class Expected:
         grids: int,
         members: int,
         columns: int,
+        walls: int,
+        slabs: int,
     ) -> None:
         self.filename = filename
         self.story_names = story_names
@@ -51,6 +53,8 @@ class Expected:
         self.grids = grids
         self.members = members
         self.columns = columns
+        self.walls = walls
+        self.slabs = slabs
 
 
 # 各フィクスチャの想定値。値は build_document の実出力から取得しており、
@@ -58,48 +62,58 @@ class Expected:
 FIXTURES = [
     Expected(
         'サンプル1 (住木邸新築工事).ifc',
-        story_names=['1階', '2階', '屋根'],
-        story_suffixes=['1', '2', 'R'],
-        story_elevations=[600.0, 3500.0, 6300.0],
+        story_names=['基礎', '1階', '2階', '屋根'],
+        story_suffixes=['F', '1', '2', 'R'],
+        story_elevations=[0.0, 600.0, 3500.0, 6300.0],
         grids=22,
         members=147,
         columns=138,
+        walls=38,
+        slabs=38,
     ),
     Expected(
         'スキップフロア_サンプル.ifc',
-        story_names=['1階', '2階', '屋根'],
-        story_suffixes=['1', '2', 'R'],
-        story_elevations=[612.0, 3571.0, 6374.0],
+        story_names=['基礎', '1階', '2階', '屋根'],
+        story_suffixes=['F', '1', '2', 'R'],
+        story_elevations=[0.0, 612.0, 3571.0, 6374.0],
         grids=25,
         members=266,
         columns=197,
+        walls=55,
+        slabs=51,
     ),
     Expected(
         '伏図次郎【2階】.ifc',
-        story_names=['1階', '2階', '屋根'],
-        story_suffixes=['1', '2', 'R'],
-        story_elevations=[600.0, 3500.0, 6300.0],
+        story_names=['基礎', '1階', '2階', '屋根'],
+        story_suffixes=['F', '1', '2', 'R'],
+        story_elevations=[0.0, 600.0, 3500.0, 6300.0],
         grids=24,
         members=270,
         columns=141,
+        walls=39,
+        slabs=36,
     ),
     Expected(
         'グレー本モデルプラン1【3階】.ifc',
-        story_names=['1階', '2階', '3階', '屋根'],
-        story_suffixes=['1', '2', '3', 'R'],
-        story_elevations=[500.0, 3300.0, 6100.0, 8900.0],
+        story_names=['基礎', '1階', '2階', '3階', '屋根'],
+        story_suffixes=['F', '1', '2', '3', 'R'],
+        story_elevations=[0.0, 500.0, 3300.0, 6100.0, 8900.0],
         grids=22,
         members=196,
         columns=165,
+        walls=27,
+        slabs=28,
     ),
     Expected(
         'グレー本モデルプラン2【3階】.ifc',
-        story_names=['1階', '2階', '3階', '屋根'],
-        story_suffixes=['1', '2', '3', 'R'],
-        story_elevations=[455.0, 3185.0, 5915.0, 8190.0],
+        story_names=['基礎', '1階', '2階', '3階', '屋根'],
+        story_suffixes=['F', '1', '2', '3', 'R'],
+        story_elevations=[0.0, 455.0, 3185.0, 5915.0, 8190.0],
         grids=20,
         members=69,
         columns=109,
+        walls=19,
+        slabs=24,
     ),
 ]
 
@@ -113,7 +127,7 @@ def fixture_path(filename: str) -> str:
 
 def build_fixture_document(filename: str) -> Document:
     """フィクスチャ IFC を解析し JSON ラウンドトリップ済みの命令セットを返す。"""
-    ifc = ifcopenshell.open(fixture_path(filename))
+    ifc = open_ifc(fixture_path(filename))
     document = build_document(ifc)
     # run() と同じく JSON を経由させ直列化可能性を保証する
     return json.loads(json.dumps(document))
@@ -231,13 +245,21 @@ class TestSampleIfcAnalysis:
         assert [s['name'] for s in stories] == exp.story_names
         assert [s['suffix'] for s in stories] == exp.story_suffixes
         assert [s['elevation'] for s in stories] == exp.story_elevations
+        # 最下階は基礎ストーリ。レベルは GL(立上り) と 底盤天端(底盤)。
+        # 並びは立上りを底盤の上に積むため GL を先頭にする。
+        foundation = stories[0]
+        assert foundation['name'] == '基礎'
+        assert foundation['suffix'] == 'F'
+        assert foundation['elevation'] == 0.0
+        assert [lv['type'] for lv in foundation['levels']] == ['GL', '底盤天端']
+        assert [lv['layer'] for lv in foundation['levels']] == ['F-立上り', 'F-底盤']
         # 最上階は常に「屋根」、構造レベルは「軒高」＋柱配置用の柱
         # 柱レベルはレイヤを軒高の直上に積むため先頭に置く
         roof = stories[-1]
         assert roof['name'] == '屋根'
         assert [lv['type'] for lv in roof['levels']] == ['柱', '軒高']
         # 一般階は FL + 横架材天端 ＋柱配置用の柱（柱レベルは FL の直上に積むため先頭）
-        for story in stories[:-1]:
+        for story in stories[1:-1]:
             assert [lv['type'] for lv in story['levels']] == [
                 '柱', 'FL', '横架材天端']
 
@@ -246,6 +268,24 @@ class TestSampleIfcAnalysis:
         assert len(document['grids']) == exp.grids
         assert len(document['members']) == exp.members
         assert len(document['columns']) == exp.columns
+        assert len(document['walls']) == exp.walls
+        assert len(document['slabs']) == exp.slabs
+
+    def test_wall_and_slab_layers_reference_foundation_layers(
+            self, exp: Expected) -> None:
+        """立上り・底盤が参照するレイヤは基礎ストーリのレイヤ名に含まれる。"""
+        document = build_fixture_document(exp.filename)
+        story_layers = {
+            level['layer']
+            for story in document['stories']
+            for level in story['levels']
+        }
+        for wall in document['walls']:
+            assert wall['layer'] == 'F-立上り'
+            assert wall['layer'] in story_layers
+        for slab in document['slabs']:
+            assert slab['layer'] == 'F-底盤'
+            assert slab['layer'] in story_layers
 
     def test_grids_are_x_or_y_axis_classes(self, exp: Expected) -> None:
         document = build_fixture_document(exp.filename)
@@ -302,10 +342,14 @@ class TestFullPipeline:
         assert counts['grids'] == len(document['grids'])
         assert counts['members'] == len(document['members'])
         assert counts['columns'] == len(document['columns'])
+        assert counts['walls'] == len(document['walls'])
+        assert counts['slabs'] == len(document['slabs'])
         assert counts['stories'] == len(exp.story_names)
         assert counts['grids'] == exp.grids
         assert counts['members'] == exp.members
         assert counts['columns'] == exp.columns
+        assert counts['walls'] == exp.walls
+        assert counts['slabs'] == exp.slabs
 
     def test_each_story_is_created(self, exp: Expected) -> None:
         document = build_fixture_document(exp.filename)

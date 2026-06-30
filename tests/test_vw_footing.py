@@ -1,0 +1,129 @@
+"""描画フェーズ (vw.footing) のテスト。vs をモックし手書きの命令で検証する。"""
+from __future__ import annotations
+
+import importlib
+from typing import Any
+from unittest.mock import MagicMock, patch
+
+from vectorworks_plugin_import_ifc_homeskz.document import SlabCommand, WallCommand
+
+
+def make_wall_command() -> WallCommand:
+    return {
+        'layer': 'F-立上り', 'class': '04構造-01基礎-03立ち上がり',
+        'start': [0.0, 0.0], 'end': [3000.0, 0.0], 'thickness': 120.0,
+        'bottom_bound': {'story_offset': 0, 'level': 'GL', 'offset': -100.0},
+        'top_bound': {'story_offset': 1, 'level': '横架材天端', 'offset': -190.0},
+    }
+
+
+def make_slab_command() -> SlabCommand:
+    return {
+        'layer': 'F-底盤', 'class': '04構造-01基礎-02基礎スラブ',
+        'boundary': [[0.0, 0.0], [3000.0, 0.0], [3000.0, 2000.0], [0.0, 2000.0]],
+        'thickness': 150.0,
+        'bound': {'story_offset': 0, 'level': '底盤天端', 'offset': 0.0},
+    }
+
+
+def _make_vs_mock(existing_layers: set[str]) -> MagicMock:
+    vs_mock = MagicMock()
+    null_handle = object()
+    vs_mock.Handle.return_value = null_handle
+
+    def get_obj(name: str) -> object:
+        return ('HANDLE_' + name) if name in existing_layers else null_handle
+
+    vs_mock.GetObject.side_effect = get_obj
+    vs_mock.LNewObj.return_value = object()
+    vs_mock.CreateSlab.return_value = object()
+    return vs_mock
+
+
+def _load(vs_mock: MagicMock) -> Any:
+    with patch.dict('sys.modules', {'vs': vs_mock}):
+        import vectorworks_plugin_import_ifc_homeskz.vw.footing as vw_footing
+        importlib.reload(vw_footing)
+        return vw_footing
+
+
+class TestExecuteWalls:
+    def test_draws_wall_with_thickness_and_bounds(self) -> None:
+        vs_mock = _make_vs_mock({'F-立上り'})
+        vw_footing = _load(vs_mock)
+
+        count = vw_footing.execute_walls([make_wall_command()])
+
+        assert count == 1
+        vs_mock.DoubLines.assert_called_once_with(120.0)
+        wall_args = vs_mock.Wall.call_args.args
+        assert wall_args == (0.0, 0.0, 3000.0, 0.0)
+        vs_mock.SetClass.assert_called_once()
+        # 下端(0)=GL、上端(1)=横架材天端 にバインド
+        bound_calls = [c.args for c in vs_mock.SetObjectStoryBound.call_args_list]
+        assert any(a[1] == 0 and a[4] == 'GL' for a in bound_calls)
+        assert any(a[1] == 1 and a[4] == '横架材天端' for a in bound_calls)
+
+    def test_skips_when_layer_missing(self) -> None:
+        vs_mock = _make_vs_mock(set())
+        vw_footing = _load(vs_mock)
+
+        count = vw_footing.execute_walls([make_wall_command()])
+
+        assert count == 0
+        vs_mock.Wall.assert_not_called()
+
+    def test_fallback_to_line_when_wall_not_created(self) -> None:
+        vs_mock = _make_vs_mock({'F-立上り'})
+        # Wall を作っても LNewObj が NIL を返す(壁が作れなかった)
+        vs_mock.LNewObj.return_value = vs_mock.Handle(0)
+        vw_footing = _load(vs_mock)
+
+        count = vw_footing.execute_walls([make_wall_command()])
+
+        assert count == 1
+        vs_mock.MoveTo.assert_called_once()
+        vs_mock.LineTo.assert_called_once()
+
+
+class TestExecuteSlabs:
+    def test_draws_slab_via_create_slab(self) -> None:
+        vs_mock = _make_vs_mock({'F-底盤'})
+        vw_footing = _load(vs_mock)
+
+        count = vw_footing.execute_slabs([make_slab_command()])
+
+        assert count == 1
+        # 外形ポリゴンを作って CreateSlab に渡す
+        vs_mock.BeginPoly.assert_called_once()
+        vs_mock.EndPoly.assert_called_once()
+        vs_mock.CreateSlab.assert_called_once()
+        vs_mock.SetSlabHeight.assert_called_once_with(
+            vs_mock.CreateSlab.return_value, 150.0)
+        # 天端を底盤天端にバインド
+        bound_calls = [c.args for c in vs_mock.SetObjectStoryBound.call_args_list]
+        assert any(a[1] == 0 and a[4] == '底盤天端' for a in bound_calls)
+        # 外形の頂点数分 LineTo (始点は MoveTo)
+        assert vs_mock.MoveTo.call_count == 1
+        assert vs_mock.LineTo.call_count == 3
+
+    def test_skips_when_layer_missing(self) -> None:
+        vs_mock = _make_vs_mock(set())
+        vw_footing = _load(vs_mock)
+
+        count = vw_footing.execute_slabs([make_slab_command()])
+
+        assert count == 0
+        vs_mock.CreateSlab.assert_not_called()
+
+    def test_fallback_to_polygon_when_slab_not_created(self) -> None:
+        vs_mock = _make_vs_mock({'F-底盤'})
+        vs_mock.CreateSlab.return_value = vs_mock.Handle(0)
+        vw_footing = _load(vs_mock)
+
+        count = vw_footing.execute_slabs([make_slab_command()])
+
+        assert count == 1
+        vs_mock.SetSlabHeight.assert_not_called()
+        # フォールバックでポリゴンにクラスを設定
+        vs_mock.SetClass.assert_called_once()
