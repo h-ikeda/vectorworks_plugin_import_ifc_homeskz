@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import os
+from unittest.mock import patch
 
 from vectorworks_plugin_import_ifc_homeskz.ifc import loader, open_ifc
 
@@ -16,6 +17,48 @@ _IFC2X3_HEADER = (
     "ENDSEC;\n"
     "DATA;\n"
 )
+
+
+class TestVersionGate:
+    def test_release_tuple_parses_release_part(self) -> None:
+        assert loader._release_tuple('0.8.4.post1') == (0, 8, 4)
+        assert loader._release_tuple('0.8.5') == (0, 8, 5)
+        assert loader._release_tuple('0.8.5.dev0') == (0, 8, 5)
+        assert loader._release_tuple('v0.8') is None
+        assert loader._release_tuple('unknown') is None
+
+    def test_needs_sanitize_for_old_version(self) -> None:
+        with patch.object(loader.ifcopenshell, 'version', '0.8.4.post1'):
+            assert loader._needs_sanitize() is True
+
+    def test_no_sanitize_for_new_version(self) -> None:
+        with patch.object(loader.ifcopenshell, 'version', '0.8.5'):
+            assert loader._needs_sanitize() is False
+
+    def test_needs_sanitize_when_version_unparseable(self) -> None:
+        # 判定できない場合は安全側(サニタイズする)
+        with patch.object(loader.ifcopenshell, 'version', 'mystery'):
+            assert loader._needs_sanitize() is True
+
+    def test_open_ifc_skips_sanitize_on_new_version(self) -> None:
+        """新しい ifcopenshell ではファイルを読まず ifcopenshell.open に委ねる。"""
+        path = os.path.join(FIXTURES_DIR, '伏図次郎【2階】.ifc')
+        with patch.object(loader.ifcopenshell, 'version', '0.8.5'), \
+                patch.object(loader.ifcopenshell, 'open') as mock_open, \
+                patch.object(loader, '_sanitize') as mock_sanitize:
+            open_ifc(path)
+        mock_open.assert_called_once_with(path)
+        mock_sanitize.assert_not_called()
+
+    def test_open_ifc_sanitizes_on_old_version(self) -> None:
+        """古い ifcopenshell では from_string 経由でサニタイズ済みを開く。"""
+        path = os.path.join(FIXTURES_DIR, '伏図次郎【2階】.ifc')
+        with patch.object(loader.ifcopenshell, 'version', '0.8.4.post1'), \
+                patch.object(loader.ifcopenshell, 'open') as mock_open, \
+                patch.object(loader.ifcopenshell.file, 'from_string') as mock_from_string:
+            open_ifc(path)
+        mock_from_string.assert_called_once()
+        mock_open.assert_not_called()
 
 
 class TestSanitize:

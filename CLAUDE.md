@@ -87,7 +87,7 @@ Python Externals フォルダのパスは OS・VectorWorks のバージョンに
 
 IFC の解析には **`ifcopenshell`** を利用します。生の STEP テキストの正規表現マッチではなく、エンティティと属性を辿る形でデータを抽出します。
 
-ただし**読み込み時のサニタイズ**は例外的にテキスト処理を行います（`ifc/loader.py` の `open_ifc`）。ホームズ君 EX の IFC2X3 出力には IFC4 でのみ定義される `IfcFootingType`（STEP の `IFCFOOTINGTYPE`）が混入しており、Python 3.9 で唯一解決される `ifcopenshell==0.8.4.post1` はこの不正エンティティにつまずいて周辺の正常な `IfcFooting`・`IfcSlab` まで取りこぼす（基礎が 1 件しか読めない）。`open_ifc` は解析前にスキーマ非適合のエンティティ行を除去してから `ifcopenshell.file.from_string` で開くことで、どの ifcopenshell / Python バージョンでも基礎が正しく読まれるようにする（除去対象は基礎の型エンティティのみで、本スクリプトは `IfcFooting` の型を参照しないため抽出結果に影響しない）。`run()` とテストのフィクスチャ読込はこの `open_ifc` を経由する。
+ただし**読み込み時のサニタイズ**は例外的にテキスト処理を行います（`ifc/loader.py` の `open_ifc`）。ホームズ君 EX の IFC2X3 出力には IFC4 でのみ定義される `IfcFootingType`（STEP の `IFCFOOTINGTYPE`）が混入しており、Python 3.9 で唯一解決される `ifcopenshell==0.8.4.post1` はこの不正エンティティにつまずいて周辺の正常な `IfcFooting`・`IfcSlab` まで取りこぼす（基礎が 1 件しか読めない）。`open_ifc` は**サニタイズが必要な古い ifcopenshell（バージョン < 0.8.5）の場合のみ**、解析前にスキーマ非適合のエンティティ行を除去してから `ifcopenshell.file.from_string` で開く。不具合が解消された 0.8.5 以降（Python 3.10+）では余計なテキスト処理を避け `ifcopenshell.open` に委ねる（バージョン判定は `_needs_sanitize`）。除去対象は基礎の型エンティティのみで、本スクリプトは `IfcFooting` の型を参照しないため抽出結果に影響しない。`run()` とテストのフィクスチャ読込はこの `open_ifc` を経由する。
 
 ## スクリプトの処理フロー
 
