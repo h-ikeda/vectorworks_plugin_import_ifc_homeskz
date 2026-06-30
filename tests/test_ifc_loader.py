@@ -105,11 +105,14 @@ class TestOpenIfc:
         # 不正エンティティで取りこぼすと 1 件しか読めない。サニタイズ後は多数。
         assert len(ifc.by_type('IfcFooting')) > 50
 
-    def test_falls_back_for_missing_file(self) -> None:
-        # 読み込めないパスはサニタイズせず ifcopenshell.open に委ね、その例外が出る
-        try:
-            open_ifc(os.path.join(FIXTURES_DIR, '__does_not_exist__.ifc'))
-        except Exception:
-            pass
-        else:  # pragma: no cover - 例外が出ない場合のみ
-            raise AssertionError('存在しないファイルで例外が送出されるはず')
+    def test_falls_back_for_missing_file_on_old_version(self) -> None:
+        # サニタイズ対象バージョンでも、読み込みに失敗したら ifcopenshell.open に委ねる
+        # (OSError を握りつぶし sanitized=None としてフォールバックする経路)。
+        missing = os.path.join(FIXTURES_DIR, '__does_not_exist__.ifc')
+        with patch.object(loader.ifcopenshell, 'version', '0.8.4.post1'):
+            try:
+                open_ifc(missing)
+            except Exception:
+                pass
+            else:  # pragma: no cover - 例外が出ない場合のみ
+                raise AssertionError('存在しないファイルで例外が送出されるはず')

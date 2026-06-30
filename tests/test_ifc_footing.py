@@ -9,6 +9,7 @@ import math
 import os
 
 import ifcopenshell
+import ifcopenshell.guid
 
 from vectorworks_plugin_import_ifc_homeskz.ifc import footing, open_ifc
 
@@ -157,3 +158,152 @@ class TestNoFoundation:
         assert footing.resolve_slab_top_elevation(ifc) is None
         assert footing.build_wall_commands(ifc) == []
         assert footing.build_slab_commands(ifc) == []
+
+
+# --- 合成エンティティを使った防御的分岐(不正/欠損ジオメトリ)のテスト ---
+
+def _f() -> ifcopenshell.file:
+    return ifcopenshell.file(schema='IFC4')
+
+
+def _pt(f: ifcopenshell.file, *c: float) -> ifcopenshell.entity_instance:
+    return f.create_entity('IfcCartesianPoint', Coordinates=[float(x) for x in c])
+
+
+def _d(f: ifcopenshell.file, *c: float) -> ifcopenshell.entity_instance:
+    return f.create_entity('IfcDirection', DirectionRatios=[float(x) for x in c])
+
+
+def _ax3(
+    f: ifcopenshell.file,
+    axis: tuple[float, float, float] | None = None,
+    ref: tuple[float, float, float] | None = None,
+) -> ifcopenshell.entity_instance:
+    return f.create_entity(
+        'IfcAxis2Placement3D', Location=_pt(f, 0.0, 0.0, 0.0),
+        Axis=_d(f, *axis) if axis else None,
+        RefDirection=_d(f, *ref) if ref else None)
+
+
+def _extruded(
+    f: ifcopenshell.file, profile: ifcopenshell.entity_instance,
+) -> ifcopenshell.entity_instance:
+    return f.create_entity(
+        'IfcExtrudedAreaSolid', SweptArea=profile, Position=_ax3(f),
+        ExtrudedDirection=_d(f, 0.0, 0.0, 1.0), Depth=1880.0)
+
+
+def _rect(f: ifcopenshell.file) -> ifcopenshell.entity_instance:
+    return f.create_entity('IfcRectangleProfileDef', ProfileType='AREA',
+                           XDim=120.0, YDim=500.0)
+
+
+def _arb(f: ifcopenshell.file) -> ifcopenshell.entity_instance:
+    poly = f.create_entity('IfcPolyline', Points=[
+        _pt(f, 0.0, 0.0), _pt(f, 100.0, 0.0),
+        _pt(f, 100.0, 50.0), _pt(f, 0.0, 50.0)])
+    return f.create_entity('IfcArbitraryClosedProfileDef', ProfileType='AREA',
+                           OuterCurve=poly)
+
+
+def _circle_profile(f: ifcopenshell.file) -> ifcopenshell.entity_instance:
+    return f.create_entity('IfcCircleProfileDef', ProfileType='AREA', Radius=100.0)
+
+
+def _shape(
+    f: ifcopenshell.file, *items: ifcopenshell.entity_instance,
+) -> ifcopenshell.entity_instance:
+    rep = f.create_entity('IfcShapeRepresentation', Items=list(items))
+    return f.create_entity('IfcProductDefinitionShape', Representations=[rep])
+
+
+def _footing(
+    f: ifcopenshell.file, name: str,
+    rep: ifcopenshell.entity_instance | None = None, placement: bool = True,
+) -> ifcopenshell.entity_instance:
+    return f.create_entity(
+        'IfcFooting', GlobalId=ifcopenshell.guid.new(), Name=name,
+        ObjectPlacement=(f.create_entity('IfcLocalPlacement',
+                                         RelativePlacement=_ax3(f))
+                         if placement else None),
+        Representation=rep)
+
+
+class TestGeometryHelperGuards:
+    def test_axis_placement_degenerate_refdirection(self) -> None:
+        # RefDirection が Axis と平行 → 直交化で 0 ベクトルになり既定 X 軸へ戻す
+        f = _f()
+        _origin, lx, _ly, _lz = footing._axis_placement(
+            _ax3(f, axis=(0.0, 0.0, 1.0), ref=(0.0, 0.0, 1.0)))
+        assert lx == (1.0, 0.0, 0.0)
+
+    def test_base_extruded_solid_returns_none_for_non_solid(self) -> None:
+        f = _f()
+        assert footing._base_extruded_solid(_pt(f, 0.0, 0.0, 0.0)) is None
+
+    def test_first_extruded_solid_none_without_representation(self) -> None:
+        f = _f()
+        assert footing._first_extruded_solid(_footing(f, 'x', rep=None)) is None
+
+    def test_first_extruded_solid_none_without_solid_items(self) -> None:
+        f = _f()
+        rep = _shape(f, _pt(f, 0.0, 0.0, 0.0))
+        assert footing._first_extruded_solid(_footing(f, 'x', rep=rep)) is None
+
+    def test_profile_points_none_for_unsupported_profile(self) -> None:
+        f = _f()
+        assert footing._profile_points(_circle_profile(f)) is None
+
+    def test_profile_points_none_for_non_polyline_outer_curve(self) -> None:
+        f = _f()
+        circle = f.create_entity(
+            'IfcCircle',
+            Position=f.create_entity('IfcAxis2Placement2D',
+                                     Location=_pt(f, 0.0, 0.0)),
+            Radius=100.0)
+        arb = f.create_entity('IfcArbitraryClosedProfileDef', ProfileType='AREA',
+                              OuterCurve=circle)
+        assert footing._profile_points(arb) is None
+
+    def test_world_solid_none_without_solid(self) -> None:
+        f = _f()
+        assert footing._world_solid(_footing(f, 'x', rep=None)) is None
+
+    def test_world_solid_none_without_placement(self) -> None:
+        f = _f()
+        rep = _shape(f, _extruded(f, _rect(f)))
+        assert footing._world_solid(
+            _footing(f, 'x', rep=rep, placement=False)) is None
+
+    def test_world_solid_none_for_unsupported_profile(self) -> None:
+        f = _f()
+        rep = _shape(f, _extruded(f, _circle_profile(f)))
+        assert footing._world_solid(_footing(f, 'x', rep=rep)) is None
+
+
+class TestBuildSkipsMalformedElements:
+    """ジオメトリが欠損/非対応の基礎要素は命令を生成せずスキップする。"""
+
+    def _file_with_malformed_footings(self) -> ifcopenshell.file:
+        f = _f()
+        f.create_entity('IfcBuildingStorey', GlobalId=ifcopenshell.guid.new(),
+                        Name='1FL', Elevation=600.0)
+        # 立上り: ジオメトリ無し(solid None) と 非矩形断面(dims None)
+        _footing(f, '基礎梁:nogeom', rep=None)
+        _footing(f, '基礎梁:arb', rep=_shape(f, _extruded(f, _arb(f))))
+        # 地中梁・底盤: ジオメトリ無し(solid None)
+        _footing(f, '地中梁:nogeom', rep=None)
+        _footing(f, '基礎底盤:nogeom', rep=None)
+        return f
+
+    def test_walls_skip_missing_and_non_rectangular(self) -> None:
+        f = self._file_with_malformed_footings()
+        assert footing.build_wall_commands(f) == []
+
+    def test_slabs_skip_missing_geometry(self) -> None:
+        f = self._file_with_malformed_footings()
+        assert footing.build_slab_commands(f) == []
+
+    def test_slab_top_elevation_none_when_base_slab_has_no_geometry(self) -> None:
+        f = self._file_with_malformed_footings()
+        assert footing.resolve_slab_top_elevation(f) is None
