@@ -224,10 +224,21 @@ class TestResolveHeightBounds:
         # 最上階: 始端・終端とも自階軒高。下端=軒高 → 始端 offset 0、終端は柱高さ分。
         start, end = resolve_height_bounds(
             2, 2, bottom_abs=6300.0, top_abs=7200.0,
-            current_level_z=6300.0, upper_level_z=None)
+            current_level_z=6300.0, upper_level_z=None, is_koyazuka=True)
         assert start == {'story_offset': 0, 'level': '軒高', 'offset': 0.0}
         assert end == {
             'story_offset': 0, 'level': '軒高', 'offset': pytest.approx(900.0)}
+
+    def test_koyazuka_on_middle_story(self) -> None:
+        # 中間階の小屋束: 上端も下端と同じ自階の横架材天端を基準にする
+        # (上階の横架材天端に結び付けない)。下端=自階天端 → 始端 offset 0、
+        # 終端は自階天端から柱高さ分(4400 − 3500 = 900)。
+        start, end = resolve_height_bounds(
+            1, 2, bottom_abs=3500.0, top_abs=4400.0,
+            current_level_z=3500.0, upper_level_z=6300.0, is_koyazuka=True)
+        assert start == {'story_offset': 0, 'level': '横架材天端', 'offset': 0.0}
+        assert end == {
+            'story_offset': 0, 'level': '横架材天端', 'offset': pytest.approx(900.0)}
 
 
 class TestBuildColumnCommands:
@@ -305,6 +316,25 @@ class TestBuildColumnCommands:
             'story_offset': 0, 'level': '軒高', 'offset': 0.0}
         assert command['end_bound'] == {
             'story_offset': 0, 'level': '軒高', 'offset': pytest.approx(900.0)}
+
+    def test_middle_story_koyazuka_binds_both_ends_to_self_beam_top(self) -> None:
+        """中間階の小屋束(STANDCOLUMN)は上端も下端と同じ自階の横架材天端に
+        バインドする。上階の横架材天端(軒高)に結び付けると短い束の上端が上階まで
+        伸びて高さが崩れるため。"""
+        ifc = ifcopenshell.file()
+        make_storey(ifc, '1FL', 600.0)
+        s2 = make_storey(ifc, '2FL', 3500.0)
+        make_storey(ifc, 'RFL', 6300.0)
+        # STANDCOLUMN は小屋束クラス。下端=3500(自階天端)、上端=3500+900=4400。
+        make_column(ifc, s2, 0.0, 0.0, height=900.0, object_type='STANDCOLUMN')
+
+        command = build_column_commands(ifc)[0]
+        assert command['class'] == '04構造-02木造-05小屋組-02小屋束'
+        assert command['structural_use'] == '5'
+        assert command['start_bound'] == {
+            'story_offset': 0, 'level': '横架材天端', 'offset': pytest.approx(0.0)}
+        assert command['end_bound'] == {
+            'story_offset': 0, 'level': '横架材天端', 'offset': pytest.approx(900.0)}
 
     def test_assigns_layer_per_story(self) -> None:
         ifc = ifcopenshell.file()

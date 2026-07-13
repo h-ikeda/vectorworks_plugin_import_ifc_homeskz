@@ -5,9 +5,10 @@ IFC の IfcColumn を走査し、各階の柱レイヤ(``n-柱``)に配置する
 断面寸法(幅・成)と柱高さを押し出しソリッドから取得する。構造用途は管柱・
 通し柱は柱、小屋束は小屋束を設定する(小屋束を柱用途にすると VW の柱高さ
 モデルで上端高さが崩れるため)。高さ基準は
-ストーリレベルにバインドする:始端は自階の横架材天端、終端は
-上階の横架材天端(最上階直下の階では上階=屋根のため軒高)。最上階(屋根)の柱は
-上階が無いため始端・終端とも自階の軒高を基準にし、終端は柱高さ分持ち上げる。
+ストーリレベルにバインドする:一般階の管柱・通し柱は始端=自階の横架材天端、
+終端=上階の横架材天端(最上階直下の階では上階=屋根のため軒高)。小屋束(最上階
+の柱を含む)は上端も下端と同じ自階の横架材天端(最上階は軒高)を基準にする
+(上階に結び付けると短い束の上端が上階まで伸びて高さが崩れるため)。
 下端 Z(ストーリ高さ + ローカル配置 Z の絶対値)と柱高さはパスのジオメトリに使う。
 
 構造材 ID (member_id) は ``{幅}×{成} - {種別}`` に柱頭・柱脚金物の仕様を連結
@@ -166,21 +167,24 @@ def resolve_height_bounds(
     index: int, top_index: int,
     bottom_abs: float, top_abs: float,
     current_level_z: float, upper_level_z: float | None,
+    is_koyazuka: bool = False,
 ) -> tuple[StoryBoundCommand, StoryBoundCommand]:
     """柱の高さ基準(ストーリレベルへのバインド)を求める。
 
-    構造用途は柱とし、柱頭/柱脚をストーリレベルにバインドする。各端の
-    ``offset`` は**バインド先レベルの絶対 Z から柱端(絶対 Z)までの距離**で、
+    各端の ``offset`` は**バインド先レベルの絶対 Z から柱端(絶対 Z)までの距離**で、
     柱の実ジオメトリ(IFC の下端 ``bottom_abs`` と上端 ``top_abs``)から決まる。
     こうすることで、ストーリ高さを VW 側で変更しても柱端はレベルから一定距離を
     保ち、かつインポート時点では IFC 通りの長さで描かれる。
 
-    - 一般階: 始端=自階の横架材天端、終端=上階の横架材天端。最上階の直下の階は
-      上階が屋根(横架材天端が無く軒高のみ)のため終端=軒高になる。標準的な柱
-      では始端は横架材天端に一致し ``offset≈0``、終端は上階梁の下端(=上階
-      横架材天端から梁背分下)になるため ``offset≈ -梁背`` になる。
-    - 最上階(屋根): 上階が無いため始端・終端とも自階の軒高を基準にし、終端は
-      軒高から柱高さ分(``top_abs - 軒高``)持ち上げる。
+    - 一般階の管柱・通し柱: 始端=自階の横架材天端、終端=上階の横架材天端。
+      最上階の直下の階は上階が屋根(横架材天端が無く軒高のみ)のため終端=軒高に
+      なる。標準的な柱では始端は横架材天端に一致し ``offset≈0``、終端は上階梁の
+      下端(=上階横架材天端から梁背分下)になるため ``offset≈ -梁背`` になる。
+    - 小屋束(``is_koyazuka``)および最上階(屋根)の柱: 上端も下端と**同じ自階の
+      横架材天端**(最上階は軒高)を基準にする。小屋束は自階の梁上に立つ短い束で、
+      上階の横架材天端に結び付けると上端高さが崩れる(上階のレベルまで伸びる)ため
+      下端と同じレベルを基準にし、終端は横架材天端から柱高さ分
+      (``top_abs - 横架材天端``)持ち上げる。最上階の柱は常に小屋束。
 
     Parameters
     ----------
@@ -188,16 +192,19 @@ def resolve_height_bounds(
     current_level_z     : 自階の横架材天端(最上階は軒高)の絶対 Z。
     upper_level_z       : 上階の横架材天端(屋根直下なら軒高)の絶対 Z。
                           最上階では上階が無いため None を渡す。
+    is_koyazuka         : 小屋束なら True。上端も自階の横架材天端を基準にする。
 
     Returns: (start_bound, end_bound)
     """
     is_top = index == top_index
-    if is_top:
+    if is_top or is_koyazuka:
+        # 小屋束(最上階の柱を含む)は上端・下端とも自階の横架材天端(最上階は軒高)。
+        level = LEVEL_EAVES if is_top else LEVEL_BEAM_TOP
         start_bound: StoryBoundCommand = {
-            'story_offset': 0, 'level': LEVEL_EAVES,
+            'story_offset': 0, 'level': level,
             'offset': bottom_abs - current_level_z}
         end_bound: StoryBoundCommand = {
-            'story_offset': 0, 'level': LEVEL_EAVES,
+            'story_offset': 0, 'level': level,
             'offset': top_abs - current_level_z}
         return start_bound, end_bound
     upper_is_top = (index + 1) == top_index
@@ -346,10 +353,12 @@ def build_column_commands(ifc_file: ifcopenshell.file) -> list[ColumnCommand]:
                 through = is_through_column(top_abs, next_floor_elevation)
                 column_class = resolve_column_class(
                     element.ObjectType, element.Name, i, top_idx, through)
-                # 小屋束は構造用途を小屋束にする(柱用途だと上端高さが崩れる)。
+                # 小屋束は構造用途を小屋束にし(柱用途だと上端高さが崩れる)、
+                # 上端も下端と同じ自階の横架材天端を基準にバインドする。
+                is_koyazuka = column_class == CLASS_KOYAZUKA
                 structural_use = (
                     STRUCTURAL_USE_KOYAZUKA
-                    if column_class == CLASS_KOYAZUKA
+                    if is_koyazuka
                     else STRUCTURAL_USE_COLUMN)
 
                 # 高さバインドの基準となるレベルの絶対 Z(自階・上階)。
@@ -363,7 +372,7 @@ def build_column_commands(ifc_file: ifcopenshell.file) -> list[ColumnCommand]:
                         elevations[i + 1], beam_offsets[i + 1], upper_is_top)
                 start_bound, end_bound = resolve_height_bounds(
                     i, top_idx, bottom_abs, top_abs,
-                    current_level_z, upper_level_z)
+                    current_level_z, upper_level_z, is_koyazuka=is_koyazuka)
 
                 commands.append({
                     'layer': layer_name,
