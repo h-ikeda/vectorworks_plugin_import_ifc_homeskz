@@ -25,8 +25,9 @@ _DATA_TAG_PLUGIN = 'Data Tag'
 
 # データタグの「引出線を表示」パラメータ(オブジェクト情報パレットのチェックボックス)。
 # 既定 ON で、部材に接して置いても引出線が描かれてしまうため per-instance で OFF に
-# する。フィールド名・値(Boolean は 'True'/'False')は VW 上で最終確認する。
-_LEADER_FIELD = 'ShowLeader'
+# する。フィールド名 'Use Leader'・Boolean 値 'False' は VW が描画したデータタグの
+# VectorScript エクスポートで確認済み。
+_LEADER_FIELD = 'Use Leader'
 _LEADER_OFF = 'False'
 
 # レイヤ種別(vs.CreateLayer): 1=デザインレイヤ, 2=プレゼンテーション(シート)レイヤ

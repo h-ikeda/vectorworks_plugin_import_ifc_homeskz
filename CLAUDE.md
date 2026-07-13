@@ -204,7 +204,7 @@ VW 2026 でレイヤをストーリレベルに正しくバインドするには
   - **引き出し線を出さない**: タグを部材の面から離すと VW が関連付け先の横架材へ引き出し線を描くため、**余白を設けず面ちょうど（`断面幅/2`）に置く**。加えてデータタグの「引出線を表示」オブジェクトパラメータ（既定 ON）を描画フェーズで OFF にする（下記描画節。面に接して置くだけでは引出線パラメータが残るため）。
 - 描画（`vw/sheet.py` の `execute_sheets` / `draw_tag`）: **タグはシート描画と同時に行う**。横架材レイヤは階ごとに固有なので、tag 命令の `layer` がビューポートの表示レイヤ（`viewport.layers`）に含まれる 1 枚の床伏図・小屋伏図にだけタグを載せる（基礎伏図や他階の伏図には載らない）。各タグは `vs.CreateCustomObject('Data Tag', position, angle)` でデータタグを作り、`vs.SetPluginStyle(obj, '断面寸法')` でスタイルを関連付け、**「引出線を表示」パラメータ（`_LEADER_FIELD`、既定 ON）を `vs.SetRField` で OFF（`_LEADER_OFF`）にして** `vs.ResetObject` で反映し、`member_index` が指す横架材ハンドル（`execute_members` が記録）に `vs.DT_AssociateWithObj` で関連付けてから、`vs.AddVPAnnotationObject(vp, obj)` でビューポート注釈に追加し `vs.DT_UpdateTaggedTags` で更新する。
   - **横架材ハンドルの受け渡し**: タグの関連付け先はモデル空間の横架材オブジェクト。ハンドルは横架材描画時にしか分からないため、`execute_members(commands, handles)` が配置した構造材ハンドルを**命令インデックスをキーに** `handles` dict へ記録し、`execute_document` がそれを `execute_sheets` へ渡す（フェーズ間は命令の並び順で対応付ける。JSON は順序を保つため `member_index` で一意に引ける）。フォールバック描画（プラグイン不可）でハンドルが無い横架材はタグを作るが関連付けは省く。
-  - **データタグの内部プラグイン名**（`vw/sheet.py` の `_DATA_TAG_PLUGIN`、既定 `'Data Tag'`）・**引出線フィールド名/値**（`_LEADER_FIELD`＝`'ShowLeader'`／`_LEADER_OFF`＝`'False'`）・関連付けの挙動（注釈内タグがモデルレイヤのオブジェクトに関連付くこと）は **VW 上で最終確認する**（描画フェーズは他の要素と同じく VectorWorks 上で検証する方針）。
+  - **データタグの内部プラグイン名**（`vw/sheet.py` の `_DATA_TAG_PLUGIN`＝`'Data Tag'`）・**引出線フィールド名/値**（`_LEADER_FIELD`＝`'Use Leader'`／`_LEADER_OFF`＝`'False'`）は VW が描画したデータタグの VectorScript エクスポートで確認済み。関連付けの挙動（注釈内タグがモデルレイヤのオブジェクトに関連付くこと）は **VW 上で最終確認する**（描画フェーズは他の要素と同じく VectorWorks 上で検証する方針）。
 
 ## VectorWorks のレイヤとクラスの規則
 
