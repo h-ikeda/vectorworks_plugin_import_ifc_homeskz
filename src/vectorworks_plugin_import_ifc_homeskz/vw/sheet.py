@@ -3,7 +3,7 @@
 各 sheet 命令について、シートレイヤ(プレゼンテーションレイヤ)を作成し、その上に
 指定したデザインレイヤ群を表示するビューポートを 1 つ配置する。ビューポートには
 命令の ``layers`` に挙げたデザインレイヤだけを表示し、それ以外のデザインレイヤは
-非表示にする。
+非表示にする。クラスは伏図に必要な要素が欠けないよう全クラスを表示にする。
 
 シートレイヤ番号・タイトル、ビューポートの図面タイトル・図番は VectorWorks の
 オブジェクト変数(``SetObjectVariableString`` の selector)で設定する。selector 値は
@@ -32,6 +32,9 @@ _OV_VP_DRAWING_NUMBER = 1034  # 図番
 _VP_LAYER_VISIBLE = 0
 _VP_LAYER_HIDDEN = 2
 
+# ビューポートのクラス表示種別(SetVPClassVisibility): 0=表示, 1=グレー, 2=非表示
+_VP_CLASS_VISIBLE = 0
+
 
 def configure_viewport_layers(
     viewport: Any, target_layers: list[str], sheet_layer: Any,
@@ -53,6 +56,18 @@ def configure_viewport_layers(
             vs.SetVPLayerVisibility(viewport, target_h, _VP_LAYER_VISIBLE)
 
 
+def configure_viewport_classes(viewport: Any) -> None:
+    """ビューポートで全クラスを表示にする。
+
+    ビューポートは既定で一部クラスが非表示になることがあるため、ドキュメントの
+    全クラス(``ClassNum``/``ClassList``)を辿って表示に設定する。表示レイヤは
+    ``configure_viewport_layers`` で絞り込むが、クラスは伏図に必要な要素が欠けない
+    よう全て表示する。
+    """
+    for i in range(1, vs.ClassNum() + 1):
+        vs.SetVPClassVisibility(viewport, vs.ClassList(i), _VP_CLASS_VISIBLE)
+
+
 def draw_viewport(
     viewport: ViewportCommand, sheet_layer: Any,
 ) -> None:
@@ -67,6 +82,7 @@ def draw_viewport(
         return
     vs.SetName(obj, viewport['drawing_title'])
     configure_viewport_layers(obj, viewport['layers'], sheet_layer)
+    configure_viewport_classes(obj)
     vs.SetObjectVariableString(obj, _OV_VP_DRAWING_TITLE, viewport['drawing_title'])
     vs.SetObjectVariableString(obj, _OV_VP_DRAWING_NUMBER, viewport['drawing_number'])
     vs.UpdateVP(obj)

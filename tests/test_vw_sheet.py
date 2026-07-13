@@ -29,13 +29,21 @@ def _handle(name: str) -> str:
 
 def _make_vs_mock(
     design_layers: list[str], sheet_exists: bool = False,
+    classes: list[str] | None = None,
 ) -> MagicMock:
-    """デザインレイヤ列挙 (FLayer/NextLayer) をモデル化した vs モック。"""
+    """デザインレイヤ列挙 (FLayer/NextLayer)・クラス列挙をモデル化した vs モック。"""
     vs_mock = MagicMock()
     null_handle = object()
     vs_mock.Handle.return_value = null_handle
 
     layer_handles = [_handle(n) for n in design_layers]
+    class_names = classes or []
+
+    def class_list(index: int) -> str:
+        return class_names[index - 1]
+
+    vs_mock.ClassNum.return_value = len(class_names)
+    vs_mock.ClassList.side_effect = class_list
 
     def f_layer() -> object:
         return layer_handles[0] if layer_handles else null_handle
@@ -129,6 +137,19 @@ class TestExecuteSheets:
                     vw_sheet._VP_LAYER_HIDDEN) in vis_calls
             assert ('VP_HANDLE', _handle(name),
                     vw_sheet._VP_LAYER_VISIBLE) not in vis_calls
+
+    def test_shows_all_classes(self) -> None:
+        classes = ['なし', '04構造-01基礎-03立ち上がり',
+                   '01作図-01線-01基準線-01通り芯-X通り']
+        vs_mock = _make_vs_mock(_TARGET_LAYERS, classes=classes)
+        vw_sheet = _load(vs_mock)
+
+        vw_sheet.execute_sheets([make_command()])
+
+        # 全クラスを表示 (0) に設定する
+        cls_calls = [c.args for c in vs_mock.SetVPClassVisibility.call_args_list]
+        for name in classes:
+            assert ('VP_HANDLE', name, vw_sheet._VP_CLASS_VISIBLE) in cls_calls
 
     def test_skips_viewport_when_creation_fails(self) -> None:
         vs_mock = _make_vs_mock(_TARGET_LAYERS)

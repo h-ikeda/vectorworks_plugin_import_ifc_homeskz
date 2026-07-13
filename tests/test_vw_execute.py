@@ -82,6 +82,8 @@ def _make_stateful_vs_mock() -> MagicMock:
     vs_mock.LNewObj.return_value = object()
     vs_mock.CreateCustomObjectPath.return_value = object()
     vs_mock.CreateSlab.return_value = object()
+    # ビューポートの全クラス表示ループ用(クラス無し扱いで空ループにする)
+    vs_mock.ClassNum.return_value = 0
     return vs_mock
 
 
