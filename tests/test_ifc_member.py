@@ -345,10 +345,10 @@ class TestBuildMemberCommands:
         assert all(c['layer'] == '1-横架材天端' for c in commands)
 
     def test_top_story_uses_eaves_layer(self) -> None:
-        """最上階 (RFL) のビームは R-軒高レイヤを指定する。"""
+        """最上階 (RFL) の梁(小屋梁)は R-軒高レイヤを指定する。"""
         ifc = ifcopenshell.file()
         storey = make_storey(ifc, 'RFL', 5973.0)
-        make_beam(ifc, storey, 0.0, 0.0)
+        make_beam(ifc, storey, 0.0, 0.0, name='木梁:小屋梁:1_1')
 
         commands = build_member_commands(ifc)
         assert len(commands) == 1
@@ -356,6 +356,42 @@ class TestBuildMemberCommands:
         # 配置高さは天端 = ストーリ高さ + ローカル Z(0) + 背/2 (断面中心 → 天端補正)
         assert commands[0]['elevation'] == pytest.approx(5973.0 + 90.0)
         assert commands[0]['end_elevation'] == pytest.approx(5973.0 + 90.0)
+
+    def test_top_story_moya_uses_moya_layer(self) -> None:
+        """最上階の母屋は R-軒高ではなく R-母屋レイヤに分けて配置する。"""
+        ifc = ifcopenshell.file()
+        storey = make_storey(ifc, 'RFL', 5973.0)
+        make_beam(ifc, storey, 0.0, 0.0, name='木梁:母屋:1_2')
+
+        commands = build_member_commands(ifc)
+        assert len(commands) == 1
+        assert commands[0]['layer'] == 'R-母屋'
+        assert commands[0]['class'] == '04構造-02木造-05小屋組-03母屋'
+
+    def test_top_story_munagi_uses_moya_layer(self) -> None:
+        """最上階の棟木も母屋と同じ R-母屋レイヤに配置する(棟木も一緒に分ける)。"""
+        ifc = ifcopenshell.file()
+        storey = make_storey(ifc, 'RFL', 5973.0)
+        make_beam(ifc, storey, 0.0, 0.0, name='木梁:棟木:1_1')
+
+        commands = build_member_commands(ifc)
+        assert len(commands) == 1
+        assert commands[0]['layer'] == 'R-母屋'
+        assert commands[0]['class'] == '04構造-02木造-05小屋組-04棟木'
+
+    def test_moya_binds_to_moya_level(self) -> None:
+        """R-母屋 に置く母屋の高さ基準は母屋レベルにバインドする(offset は軒高と同基準)。"""
+        ifc = ifcopenshell.file()
+        storey = make_storey(ifc, 'RFL', 5973.0)
+        # 母屋は軒高より高い位置(oz=300)にあることが多いが、レベルは軒高と同じ
+        # 絶対 Z=ストーリ高さなので offset = 天端 - ストーリ高さ。
+        make_beam(ifc, storey, 0.0, 0.0, oz=300.0, name='木梁:母屋:1_2')
+
+        command = build_member_commands(ifc)[0]
+        # 天端 = 5973 + 300 + 90 = 6363、レベル絶対 Z = 5973 → offset = 390
+        assert command['start_bound'] == {
+            'story_offset': 0, 'level': '母屋', 'offset': pytest.approx(390.0)}
+        assert command['end_bound']['level'] == '母屋'
 
     def test_assigns_layer_per_story(self) -> None:
         ifc = ifcopenshell.file()
@@ -491,10 +527,10 @@ class TestBuildMemberCommands:
         assert command['end_bound']['offset'] == pytest.approx(313.0 - 473.0)
 
     def test_binds_top_story_beam_to_eaves_level(self) -> None:
-        """最上階の梁は軒高レベルにバインドする。"""
+        """最上階の梁(小屋梁)は軒高レベルにバインドする。"""
         ifc = ifcopenshell.file()
         storey = make_storey(ifc, 'RFL', 5973.0)
-        make_beam(ifc, storey, 0.0, 0.0)
+        make_beam(ifc, storey, 0.0, 0.0, name='木梁:小屋梁:1_1')
 
         command = build_member_commands(ifc)[0]
         # レベル絶対 Z = 5973、天端 = 5973+90
@@ -599,6 +635,8 @@ class TestBuildMemberCommands:
 
         commands = build_member_commands(ifc)
         assert commands[0]['class'] == '04構造-02木造-05小屋組-03母屋'
+        # 名前で判別できなくても母屋と推定された材は R-母屋 レイヤに分ける
+        assert commands[0]['layer'] == 'R-母屋'
 
     def test_skips_beam_without_placement(self) -> None:
         ifc = ifcopenshell.file()

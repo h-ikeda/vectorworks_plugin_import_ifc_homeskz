@@ -15,6 +15,9 @@ LEVEL_FL = 'FL'
 LEVEL_BEAM_TOP = '横架材天端'
 LEVEL_EAVES = '軒高'
 LEVEL_COLUMN = '柱'
+# 母屋(棟木を含む小屋組の上端材)を配置するレイヤ・レベル。最上階(屋根)で
+# 梁(小屋梁・軒桁)と重なって見にくいため、軒高レイヤと分けた専用レイヤに置く。
+LEVEL_MOYA = '母屋'
 # 下階柱記号(柱束伏図記号 PIO)を配置するレイヤ・レベル。各階の伏図に直下階
 # (N-1)の柱を記号化するため、横架材天端(最上階は軒高)レイヤの直上に積む。
 LEVEL_UNDER_COLUMN = '下階柱'
@@ -119,7 +122,8 @@ def build_story_commands(ifc_file: ifcopenshell.file) -> list[StoryCommand]:
 
     加えて最下階(下に柱が無い)以外の各階には、直下階(N-1)の柱を伏図に記号化する
     下階柱記号(柱束伏図記号 PIO)を置く 下階柱 レベルを、横架材天端(最上階は軒高)
-    レイヤの直上に積む。
+    レイヤの直上に積む。最上階(屋根)にはさらに、母屋(棟木含む)を梁と分けて配置する
+    母屋 レベルを軒高レイヤの直上に積む。
 
     ``levels`` の並び順は**デザインレイヤの希望スタック順(上→下)**を表す。柱レイヤを
     FL(最上階は軒高)レイヤの直上に積むため 柱 レベルを先頭に置く。実際のレイヤ並びは
@@ -156,6 +160,14 @@ def build_story_commands(ifc_file: ifcopenshell.file) -> list[StoryCommand]:
                 len(levels) - 1,
                 {'type': LEVEL_UNDER_COLUMN, 'offset': column_offset,
                  'layer': f'{prefix}-{LEVEL_UNDER_COLUMN}'})
+        # 母屋(棟木含む)を配置するレイヤ。最上階(屋根)のみ、軒高レイヤの直上に
+        # 積む(levels の末尾=軒高の直前に挿入する)。高さは軒高に揃える(offset 0)
+        # ため実描画の高さは母屋部材の天端バインドが担い、この offset には依存しない。
+        if is_top:
+            levels.insert(
+                len(levels) - 1,
+                {'type': LEVEL_MOYA, 'offset': 0.0,
+                 'layer': f'{prefix}-{LEVEL_MOYA}'})
         # 柱を配置するレイヤ。高さは横架材天端(最上階は軒高)に揃える。
         # levels の先頭=スタック最上段とし、FL(最上階は軒高)レイヤの直上に来るようにする。
         levels.insert(

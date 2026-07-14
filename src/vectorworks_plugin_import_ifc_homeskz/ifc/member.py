@@ -24,10 +24,11 @@ from .grid import resolve_lines
 from .story import (
     LEVEL_BEAM_TOP,
     LEVEL_EAVES,
+    LEVEL_MOYA,
     layer_prefix_for,
     resolve_beam_top_offset,
 )
-from .structural_class import resolve_member_class
+from .structural_class import CLASS_MOYA, CLASS_MUNAGI, resolve_member_class
 
 if TYPE_CHECKING:
     import ifcopenshell
@@ -294,6 +295,8 @@ def build_member_commands(ifc_file: ifcopenshell.file) -> list[MemberCommand]:
 
     配置座標は通り芯と同じグリッド中心オフセットで補正する。
     最上階(屋根)には横架材天端レイヤが存在しないため軒高レイヤを指定する。
+    ただし最上階の母屋・棟木(小屋組の上端材)は梁と重なって見にくいため、
+    軒高レイヤと分けた母屋レイヤ(R-母屋)に配置する。
     """
     _, center_x, center_y = resolve_lines(ifc_file)
 
@@ -379,19 +382,30 @@ def build_member_commands(ifc_file: ifcopenshell.file) -> list[MemberCommand]:
                 member_class = resolve_member_class(
                     element.Name, i, top_idx, above_eaves)
 
-                # 高さ基準を配置先レイヤのストーリレベル(横架材天端、最上階は
-                # 軒高)にバインドする。offset はレベルの絶対 Z(layer_elevation)
+                # 母屋・棟木(小屋組の上端材)は最上階で梁(小屋梁・軒桁)と重なって
+                # 見にくいため、軒高レイヤと分けた母屋レイヤ(R-母屋)に配置し、
+                # 高さ基準も母屋レベルにバインドする。母屋レベルは軒高と同じ絶対 Z
+                # (offset 0)なので layer_elevation は変わらず offset の算出はそのまま。
+                if is_top and member_class in (CLASS_MOYA, CLASS_MUNAGI):
+                    element_layer_name = f'{prefix}-{LEVEL_MOYA}'
+                    bound_level = LEVEL_MOYA
+                else:
+                    element_layer_name = layer_name
+                    bound_level = layer_suffix
+
+                # 高さ基準を配置先レイヤのストーリレベル(横架材天端、最上階は軒高、
+                # 母屋は母屋)にバインドする。offset はレベルの絶対 Z(layer_elevation)
                 # から天端 Z までの距離。平らな梁は ≈0、段差梁は一定値、傾斜梁は
                 # 始端/終端で異なる値になる。
                 start_bound: StoryBoundCommand = {
-                    'story_offset': 0, 'level': layer_suffix,
+                    'story_offset': 0, 'level': bound_level,
                     'offset': elevation - layer_elevation}
                 end_bound: StoryBoundCommand = {
-                    'story_offset': 0, 'level': layer_suffix,
+                    'story_offset': 0, 'level': bound_level,
                     'offset': end_elevation - layer_elevation}
 
                 commands.append({
-                    'layer': layer_name,
+                    'layer': element_layer_name,
                     'member_id': member_id,
                     'class': member_class,
                     'start': [x1, y1],

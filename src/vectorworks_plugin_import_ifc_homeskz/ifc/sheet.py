@@ -18,6 +18,9 @@
   各階の横架材(``n-横架材天端``、最上階は ``n-軒高``)・柱(``n-柱``)・通り芯(``共通``)。
   加えて一般階(最上階以外)は床(``n-FL``)も表示し、最下階には基礎がある場合に
   アンカーボルト(``F-アンカーボルト``)も表示する。
+- **母屋伏図**(``build_moya_sheet_commands``): 最上階(屋根)の母屋・棟木(と将来の
+  垂木)を梁と分けて表示する 1 枚。シートレイヤ番号は柱梁伏図の最後(小屋伏図)に
+  続けて振る。表示レイヤは母屋(``R-母屋``)・通り芯(``共通``)。
 """
 from __future__ import annotations
 
@@ -34,6 +37,7 @@ from .story import (
     LEVEL_COLUMN,
     LEVEL_EAVES,
     LEVEL_FL,
+    LEVEL_MOYA,
     LEVEL_UNDER_COLUMN,
     collect_stories,
     layer_prefix_for,
@@ -58,6 +62,10 @@ FOUNDATION_PLAN_LAYERS = [
 FLOOR_PLAN_ROOF_TITLE = '小屋伏図'
 # 柱梁伏図のシートレイヤ番号の開始値。基礎伏図(番号 1)に続けて 2 から振る。
 FLOOR_PLAN_START_NUMBER = 2
+
+# 母屋伏図シートの構成。母屋・棟木(と将来の垂木)を梁と分けて表示する 1 枚。
+# 柱梁伏図の最後(小屋伏図)に続けてシートレイヤ番号を振る。
+MOYA_PLAN_TITLE = '母屋伏図'
 
 
 def build_foundation_sheet_commands(
@@ -129,12 +137,41 @@ def build_floor_framing_sheet_commands(
     return commands
 
 
+def build_moya_sheet_commands(
+    ifc_file: ifcopenshell.file,
+) -> list[SheetCommand]:
+    """母屋伏図シートの sheet 命令を組み立てて返す。
+
+    最上階(屋根)の母屋・棟木(と将来の垂木)を梁と分けて表示する伏図を 1 枚返す。
+    シートレイヤ番号は柱梁伏図の最後(小屋伏図)に続けて振る。表示レイヤは
+    母屋(``R-母屋``)・通り芯(``共通``)。ストーリが無ければ空リストを返す。
+    """
+    stories = collect_stories(ifc_file)
+    if not stories:
+        return []
+    top_idx = len(stories) - 1
+    prefix = layer_prefix_for(top_idx, True)
+    # 番号: 基礎伏図(1)+各階柱梁伏図(ストーリ数)の次
+    number = str(FLOOR_PLAN_START_NUMBER + len(stories))
+    return [{
+        'number': number,
+        'title': MOYA_PLAN_TITLE,
+        'viewport': {
+            'drawing_title': MOYA_PLAN_TITLE,
+            'drawing_number': number,
+            'layers': [f'{prefix}-{LEVEL_MOYA}', TARGET_LAYER],
+        },
+    }]
+
+
 def build_sheet_commands(ifc_file: ifcopenshell.file) -> list[SheetCommand]:
     """sheet 命令のリストを組み立てて返す。
 
-    基礎伏図(基礎がある場合のみ)に続けて、各階の柱梁伏図を組み立てる。
+    基礎伏図(基礎がある場合のみ)に続けて、各階の柱梁伏図、最後に母屋伏図を
+    組み立てる。
     """
     return [
         *build_foundation_sheet_commands(ifc_file),
         *build_floor_framing_sheet_commands(ifc_file),
+        *build_moya_sheet_commands(ifc_file),
     ]
