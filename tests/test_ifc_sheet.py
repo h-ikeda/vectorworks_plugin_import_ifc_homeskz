@@ -83,11 +83,31 @@ class TestBuildFloorFramingSheetCommands:
         assert roof['viewport']['layers'] == ['R-軒高', 'R-柱', 'R-下階柱', '共通']
 
 
+class TestBuildMoyaSheetCommands:
+    def test_no_sheet_without_stories(self) -> None:
+        # ストーリが無ければ母屋伏図シートは作らない
+        empty = ifcopenshell.file()
+        assert sheet.build_moya_sheet_commands(empty) == []
+
+    def test_moya_sheet_from_fixture(self) -> None:
+        ifc = _open('伏図次郎【2階】.ifc')
+        sheets = sheet.build_moya_sheet_commands(ifc)
+        assert len(sheets) == 1
+        command = sheets[0]
+        # 基礎伏図(1)+各階柱梁伏図(1階・2階・屋根=3)の次=5
+        assert command['number'] == '5'
+        assert command['title'] == '母屋伏図'
+        # 表示レイヤは母屋・通り芯
+        assert command['viewport']['drawing_title'] == '母屋伏図'
+        assert command['viewport']['drawing_number'] == '5'
+        assert command['viewport']['layers'] == ['R-母屋', '共通']
+
+
 class TestBuildSheetCommands:
-    def test_foundation_then_floor_framing(self) -> None:
-        # 基礎伏図に続けて各階の柱梁伏図が並ぶ
+    def test_foundation_then_floor_framing_then_moya(self) -> None:
+        # 基礎伏図に続けて各階の柱梁伏図が並び、最後に母屋伏図が来る
         ifc = _open('伏図次郎【2階】.ifc')
         sheets = sheet.build_sheet_commands(ifc)
         assert [s['title'] for s in sheets] == [
-            '基礎伏図', '1階床伏図', '2階床伏図', '小屋伏図']
-        assert [s['number'] for s in sheets] == ['1', '2', '3', '4']
+            '基礎伏図', '1階床伏図', '2階床伏図', '小屋伏図', '母屋伏図']
+        assert [s['number'] for s in sheets] == ['1', '2', '3', '4', '5']

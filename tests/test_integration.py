@@ -80,7 +80,7 @@ FIXTURES = [
         slabs=38,
         anchor_bolts=96,
         fire_braces=66,
-        sheets=4,
+        sheets=5,
         column_marks=2,
     ),
     Expected(
@@ -95,7 +95,7 @@ FIXTURES = [
         slabs=51,
         anchor_bolts=110,
         fire_braces=35,
-        sheets=4,
+        sheets=5,
         column_marks=2,
     ),
     Expected(
@@ -110,7 +110,7 @@ FIXTURES = [
         slabs=36,
         anchor_bolts=85,
         fire_braces=28,
-        sheets=4,
+        sheets=5,
         column_marks=2,
     ),
     Expected(
@@ -125,7 +125,7 @@ FIXTURES = [
         slabs=28,
         anchor_bolts=60,
         fire_braces=28,
-        sheets=5,
+        sheets=6,
         column_marks=3,
     ),
     Expected(
@@ -140,7 +140,7 @@ FIXTURES = [
         slabs=24,
         anchor_bolts=30,
         fire_braces=2,
-        sheets=5,
+        sheets=6,
         column_marks=3,
     ),
 ]
@@ -294,11 +294,12 @@ class TestSampleIfcAnalysis:
             '基礎天端', 'GL', '底盤天端']
         assert [lv['layer'] for lv in foundation['levels']] == [
             'F-アンカーボルト', 'F-立上り', 'F-底盤']
-        # 最上階は常に「屋根」、構造レベルは「軒高」＋柱配置用の柱＋下階柱記号の下階柱。
-        # 柱レベルはレイヤを軒高の直上に積むため先頭、下階柱は軒高の直上に積む。
+        # 最上階は常に「屋根」、構造レベルは「軒高」＋柱配置用の柱＋下階柱記号の下階柱
+        # ＋母屋(棟木含む)配置用の母屋。柱レベルはレイヤを軒高の直上に積むため先頭、
+        # 下階柱・母屋は軒高の直上に積む(母屋が軒高の直前)。
         roof = stories[-1]
         assert roof['name'] == '屋根'
-        assert [lv['type'] for lv in roof['levels']] == ['柱', '下階柱', '軒高']
+        assert [lv['type'] for lv in roof['levels']] == ['柱', '下階柱', '母屋', '軒高']
         # 最下階(1階=stories[1])は下に柱が無いため下階柱レベルを持たない
         assert [lv['type'] for lv in stories[1]['levels']] == [
             '柱', 'FL', '横架材天端']
@@ -335,15 +336,17 @@ class TestSampleIfcAnalysis:
 
     def test_floor_framing_sheets_follow_foundation(
             self, exp: Expected) -> None:
-        """基礎伏図に続けて各階の柱梁伏図が並び、既知のレイヤを参照する。"""
+        """基礎伏図に続けて各階の柱梁伏図が並び、最後に母屋伏図が来る。"""
         document = build_fixture_document(exp.filename)
         story_layers = {
             level['layer']
             for story in document['stories']
             for level in story['levels']
         }
-        # 基礎伏図(先頭)以降が柱梁伏図。フロア数 = FL ストーリ数(= 基礎を除く)。
-        floor_sheets = document['sheets'][1:]
+        # 基礎伏図(先頭)と母屋伏図(末尾)を除いた中間が各階の柱梁伏図。
+        # フロア数 = FL ストーリ数(= 基礎を除く)。
+        floor_sheets = document['sheets'][1:-1]
+        moya_sheet = document['sheets'][-1]
         floor_story_count = len(exp.story_names) - 1
         assert len(floor_sheets) == floor_story_count
         # タイトルは 1階床伏図・2階床伏図・…・小屋伏図
@@ -354,10 +357,14 @@ class TestSampleIfcAnalysis:
         # シートレイヤ番号は基礎伏図(1)に続けて 2 から連番
         assert [s['number'] for s in floor_sheets] == [
             str(2 + i) for i in range(floor_story_count)]
-        # 各伏図の表示レイヤは 通り芯 と 各階のストーリレイヤ(横架材・柱・床)、
+        # 母屋伏図は最後で、番号は柱梁伏図に続く。表示レイヤは母屋・通り芯。
+        assert moya_sheet['title'] == '母屋伏図'
+        assert moya_sheet['number'] == str(2 + floor_story_count)
+        assert moya_sheet['viewport']['layers'] == ['R-母屋', '共通']
+        # 各伏図の表示レイヤは 通り芯 と 各階のストーリレイヤ(横架材・柱・床・母屋)、
         # および最下階のアンカーボルトのみ。
         allowed = story_layers | {'共通'}
-        for s in floor_sheets:
+        for s in floor_sheets + [moya_sheet]:
             for layer in s['viewport']['layers']:
                 assert layer in allowed, \
                     f"未知のレイヤを参照しています: {layer}"
