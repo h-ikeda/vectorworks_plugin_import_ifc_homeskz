@@ -363,21 +363,27 @@ class TestSampleIfcAnalysis:
         moya_sheet = document['sheets'][-1]
         floor_story_count = len(exp.story_names) - 1
         assert len(floor_sheets) == floor_story_count
-        # タイトルは 1階床伏図・2階床伏図・…・小屋伏図。下屋根の母屋を含む中間階は
-        # {n}階床・{n-1}階母屋伏図 になる。
+        # タイトルは 1階床伏図・2階床伏図・…、最上階は主屋根の階番号を付けた
+        # {n-1}階小屋伏図。直下階が下屋根の母屋を含む階は、その母屋を 1 つ上の
+        # この階の伏図に載せるため …・{直下階}階母屋伏図 になる(直下階の名前判定
+        # {i}階 が moya_stories に含まれるか)。
+        n = floor_story_count
         expected_titles = []
-        for i in range(floor_story_count - 1):
-            if f'{i + 1}階' in exp.moya_stories:
-                expected_titles.append(f'{i + 1}階床・{i}階母屋伏図')
+        for i in range(n):
+            is_top = i == n - 1
+            has_moya_below = i >= 1 and f'{i}階' in exp.moya_stories
+            base = f'{n - 1}階小屋' if is_top else f'{i + 1}階床'
+            if has_moya_below:
+                expected_titles.append(f'{base}・{i - 1}階母屋伏図')
             else:
-                expected_titles.append(f'{i + 1}階床伏図')
-        expected_titles.append('小屋伏図')
+                expected_titles.append(f'{base}伏図')
         assert [s['title'] for s in floor_sheets] == expected_titles
         # シートレイヤ番号は基礎伏図(1)に続けて 2 から連番
         assert [s['number'] for s in floor_sheets] == [
             str(2 + i) for i in range(floor_story_count)]
-        # 母屋伏図は最後で、番号は柱梁伏図に続く。表示レイヤは母屋・小屋束記号・通り芯。
-        assert moya_sheet['title'] == '母屋伏図'
+        # 母屋伏図は最後で、番号は柱梁伏図に続く。タイトルは主屋根の階番号付き。
+        # 表示レイヤは母屋・小屋束記号・通り芯。
+        assert moya_sheet['title'] == f'{floor_story_count - 1}階母屋伏図'
         assert moya_sheet['number'] == str(2 + floor_story_count)
         assert moya_sheet['viewport']['layers'] == ['R-母屋', 'R-小屋束', '共通']
         # 各伏図の表示レイヤは 通り芯 と 各階のストーリレイヤ(横架材・柱・床・母屋)、
