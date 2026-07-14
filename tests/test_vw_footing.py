@@ -131,7 +131,7 @@ class TestExecuteWallJoins:
         assert args[2] == (0.0, 0.0)
         assert args[3] == (0.0, 0.0)
         assert args[4] == 2       # join_type (L)
-        assert args[5] is True    # capped
+        assert args[5] is False   # capped(コンクリート一体のため閉じない)
         assert args[6] is False   # showAlerts
 
     def test_skips_when_handle_missing(self) -> None:

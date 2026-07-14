@@ -16,9 +16,10 @@ from ..document import SlabCommand, WallCommand, WallJoinCommand
 
 WALL_STYLE_NAME = '基礎 - 木造ベタ基礎150mm'
 
-# 壁結合(JoinWalls)の引数。capped=True で結合部を閉じ、showAlerts=False で
-# 結合失敗時のダイアログを抑止する(インポート中に手動操作を求められないように)。
-_JOIN_CAPPED = True
+# 壁結合(JoinWalls)の引数。基礎立上りはコンクリートで一体のため capped=False
+# (結合部を閉じない=貫通)にする。showAlerts=False で結合失敗時のダイアログを
+# 抑止する(インポート中に手動操作を求められないように)。
+_JOIN_CAPPED = False
 _JOIN_SHOW_ALERTS = False
 
 
