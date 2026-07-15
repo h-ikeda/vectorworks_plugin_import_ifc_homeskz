@@ -291,6 +291,32 @@ class TestBuildWallJoinCommands:
         # 同じ天端高さ同士はコンクリート一体で閉じない
         assert joins[0]['capped'] is False
 
+    def test_pick_points_offset_toward_kept_side(self) -> None:
+        # ピック点は交点そのものではなく、各壁の「残す側」(交点から遠い端点方向)へ
+        # 寄せた点にする(交点は相手壁芯上にあり残す側が曖昧で VW がコーナーを詰めない)。
+        walls = [
+            _wall([0.0, 0.0], [3000.0, 0.0]),   # 水平: 残す側は +x 方向
+            _wall([0.0, 0.0], [0.0, 3000.0]),   # 鉛直: 残す側は +y 方向
+        ]
+        joins = footing.build_wall_join_commands(walls)
+        assert len(joins) == 1
+        join = joins[0]
+        # 交点は原点。ピック点はそこから残す側へ寄る。
+        assert join['point'] == [0.0, 0.0]
+        # a(水平)は +x 方向へ寄り y は変わらない。交点(原点)より離れている。
+        assert join['pick_a'][0] > 0.0
+        assert join['pick_a'][1] == 0.0
+        # b(鉛直)は +y 方向へ寄り x は変わらない。
+        assert join['pick_b'][1] > 0.0
+        assert join['pick_b'][0] == 0.0
+        # 詰める端点(近い側=原点)が最も近い端点のまま(残す側へ寄せすぎない)。
+        for pick, wall in ((join['pick_a'], walls[0]), (join['pick_b'], walls[1])):
+            px, py = pick
+            d_near = math.hypot(px - 0.0, py - 0.0)
+            far = wall['end']
+            d_far = math.hypot(px - far[0], py - far[1])
+            assert d_near < d_far
+
     def test_overhanging_corner_is_l_not_x(self) -> None:
         # ホームズ君 IFC の外周コーナー: 各壁が相手壁の外面まで伸びるため、壁芯
         # どうしの交点が各壁の端から半壁厚(既定 120mm の半分=60mm)離れる。

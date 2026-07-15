@@ -116,9 +116,14 @@
                 # a・b でその壁を引いて JoinWalls に渡す。
                 "a": 0,                   # 1 本目(T 結合ではこちらが延長される側=stem)
                 "b": 1,                   # 2 本目(T 結合ではこちらが通し側=through)
-                # 結合位置(2 壁の壁芯の交点、mm・センタリング済み)。JoinWalls の
-                # ピック点(どの端を結合するか指定する点)として両壁に渡す。
+                # 結合位置(2 壁の壁芯の交点、mm・センタリング済み)。参照用。
                 "point": [0.0, 0.0],
+                # JoinWalls に渡すピック点(a・b それぞれの壁上の点)。壁芯の交点
+                # そのものではなく、各壁の「残す側」(交点から遠い端点方向)へ寄せた
+                # 点にする(交点は相手壁の壁芯上にも乗り残す側が曖昧になるため。
+                # これがないと VW が L 結合でコーナーを詰めず立上りが伸びたまま残る)。
+                "pick_a": [30.0, 0.0],
+                "pick_b": [0.0, 30.0],
                 # 結合種別(JoinWalls の joinModifier)。1=T 結合・2=L 結合・
                 # 3=X 結合。両壁の端点/内部のどちらで交わるかで解析フェーズが判定する
                 # (両端点=L、片端点+片内部=T、両内部=X)。
@@ -384,8 +389,14 @@ class WallJoinCommand(TypedDict):
     ``a`` / ``b`` は結合する 2 つの壁の walls 内インデックス。描画フェーズは
     walls を描くときに命令インデックスをキーに壁ハンドルを記録し、``a`` / ``b`` で
     その壁を引いて JoinWalls に渡す(タグの member_index と同じ受け渡し方式)。
-    ``point`` は 2 壁の壁芯の交点(mm・センタリング済み)で、JoinWalls のピック点
-    (どの端を結合するか指定する点)として両壁に渡す。``join_type`` は JoinWalls の
+    ``point`` は 2 壁の壁芯の交点(mm・センタリング済み)で、参照用に保持する。
+
+    ``pick_a`` / ``pick_b`` は JoinWalls に渡すピック点(``a`` / ``b`` それぞれの壁上の
+    点、mm・センタリング済み)。**壁芯の交点そのものではなく、各壁の「残す側」(交点
+    から遠い端点の方向)へ寄せた点**にする。交点は両壁芯の交点で相手壁の壁芯上にも
+    乗るため「どちら側を残すか」が曖昧になり、VW が L 結合でコーナーを詰めず立上りが
+    相手壁の外面まで伸びたまま残る。残す側へ控えめに寄せることで残す区間を明示しつつ、
+    詰める端点(近い側)が最も近い端点のまま保たれる。``join_type`` は JoinWalls の
     joinModifier(1=T 結合・2=L 結合・3=X 結合)で、両壁が端点同士で交われば L、
     片方の端点と他方の内部で交われば T(``a`` を延長される stem、``b`` を通し
     through にする)、両方の内部で交われば X と解析フェーズが判定する。
@@ -400,6 +411,8 @@ class WallJoinCommand(TypedDict):
     a: int
     b: int
     point: list[float]
+    pick_a: list[float]
+    pick_b: list[float]
     join_type: int
     capped: bool
 
@@ -687,6 +700,9 @@ def _validate_wall_join(index: int, command: Any) -> None:
              f'{where}.a と {where}.b は異なる壁インデックスである必要があります')
     _require(_is_point(command.get('point')),
              f'{where}.point は [x, y] の数値ペアである必要があります')
+    for key in ('pick_a', 'pick_b'):
+        _require(_is_point(command.get(key)),
+                 f'{where}.{key} は [x, y] の数値ペアである必要があります')
     # joinModifier: 1=T / 2=L / 3=X / 4=auto
     _require(command.get('join_type') in (1, 2, 3, 4),
              f'{where}.join_type は 1/2/3/4 のいずれかである必要があります')

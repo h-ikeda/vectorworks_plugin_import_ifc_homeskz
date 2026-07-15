@@ -689,6 +689,39 @@ def _wall_point_at_end(wall: WallCommand, px: float, py: float) -> bool:
     return t <= frac or t >= 1.0 - frac
 
 
+# ピック点を交点から「残す側」へ寄せる際の、寄せ量を壁芯長に対して制限する上限。
+# 交点〜遠い端点の距離にこの割合を掛けた値で寄せ量をクランプし、寄せた点が残す
+# 区間を越えない・詰める端点(近い側)が最も近い端点のまま保たれるようにする。
+_PICK_OFFSET_FRAC = 0.4
+
+
+def _kept_side_pick(
+    wall: WallCommand, jx: float, jy: float, offset: float,
+) -> list[float]:
+    """壁 ``wall`` の交点 (jx, jy) から「残す側」へ寄せた JoinWalls ピック点を返す。
+
+    残す側 = 交点から**遠い**端点の方向。JoinWalls のピック点は各壁の「残す側の
+    壁芯上の点」を指す必要がある。交点そのもの(両壁芯の交点)は相手壁の壁芯上にも
+    乗るため「どちら側を残すか」が曖昧になり、VW が L 結合でコーナーを詰めず立上りが
+    相手壁の外面まで伸びたまま残る(本不具合)。遠い端点方向へ ``offset`` だけ寄せた
+    点にすることで残す区間を明示する。寄せ量は交点〜遠い端点の距離の
+    ``_PICK_OFFSET_FRAC`` までにクランプし、控えめに寄せて詰める端点(近い側)が最も
+    近い端点のまま保たれるようにする(遠い端点が最寄りになると VW が残す/詰める側を
+    取り違えるのを防ぐ)。壁芯長が 0 の場合は交点をそのまま返す。
+    """
+    x1, y1 = wall['start']
+    x2, y2 = wall['end']
+    d1 = math.hypot(x1 - jx, y1 - jy)
+    d2 = math.hypot(x2 - jx, y2 - jy)
+    fx, fy = (x2, y2) if d2 >= d1 else (x1, y1)
+    dx, dy = fx - jx, fy - jy
+    length = math.hypot(dx, dy)
+    if length <= 0.0:
+        return [jx, jy]
+    step = min(offset, length * _PICK_OFFSET_FRAC) / length
+    return [jx + dx * step, jy + dy * step]
+
+
 def _wall_junctions(
     walls: list[WallCommand],
 ) -> list[tuple[tuple[float, float], list[int]]]:
@@ -766,6 +799,13 @@ def _emit_junction_joins(
     tops = {idx: _wall_top(walls[idx]) for idx in indices}
     interiors = [idx for idx in indices if not at_end[idx]]
     ends = [idx for idx in indices if at_end[idx]]
+    # ピック点の寄せ量。交点に集まる立上りの最大壁厚を使い、相手壁の footprint
+    # (半壁厚)を確実に越えて残す側に寄せる(交点は相手壁芯上にあり曖昧なため)。
+    pick_offset = max(walls[idx]['thickness'] for idx in indices)
+
+    def picks(a: int, b: int) -> tuple[list[float], list[float]]:
+        return (_kept_side_pick(walls[a], px, py, pick_offset),
+                _kept_side_pick(walls[b], px, py, pick_offset))
 
     def height_order(idx: int) -> tuple[float, int]:
         # 天端高さ降順・インデックス昇順(バックボーンに最も高い立上りを選ぶ)
@@ -780,13 +820,17 @@ def _emit_junction_joins(
             a, b = low_or_other, root        # low_or_other が低い → a
         else:
             a, b = root, low_or_other        # 同高: ルートを a(既存挙動)
+        pick_a, pick_b = picks(a, b)
         return {'a': a, 'b': b, 'point': [px, py],
+                'pick_a': pick_a, 'pick_b': pick_b,
                 'join_type': join_type, 'capped': capped}
 
     def make_t(stem: int, through: int) -> WallJoinCommand:
         """T 結合の命令を作る。stem(端点側=延長される)を ``a`` にする。"""
         capped = abs(tops[stem] - tops[through]) > _WALL_HEIGHT_TOL
+        pick_a, pick_b = picks(stem, through)
         return {'a': stem, 'b': through, 'point': [px, py],
+                'pick_a': pick_a, 'pick_b': pick_b,
                 'join_type': _JOIN_T, 'capped': capped}
 
     def pick_through(stem: int, candidates: list[int]) -> int:
