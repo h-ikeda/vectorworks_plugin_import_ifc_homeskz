@@ -104,3 +104,10 @@ jobs:
           file: coverage.xml
           language: Python
           label: code-coverage/pytest
+          # アップロード失敗を CI エラーではなく警告として扱う。
+          # GitHub Code Quality がリポジトリで未有効の間はカバレッジ API が
+          # HTTP 404 を返すため、レポート処理で CI を落とさない
+          # (マージ制限自体はサーバー側のルールセットが担うため、この
+          #  アップロードステップの成否をマージのゲートにはしない)。
+          # Code Quality を有効化すればアップロードが成功し PR に反映される。
+          fail-on-error: false
