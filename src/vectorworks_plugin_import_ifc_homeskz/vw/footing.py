@@ -134,7 +134,9 @@ def execute_wall_joins(
     ``handles`` は ``execute_walls`` が記録した壁インデックス→壁ハンドルの dict。
     各命令の ``a`` / ``b`` で 2 つの壁ハンドルを引き、``vs.JoinWalls`` で結合する。
     どちらかの壁が未配置(レイヤ未生成・フォールバック描画でハンドル未記録)の
-    命令はスキップする。ピック点(どの端を結合するか)は両壁とも交点を渡し、
+    命令はスキップする。ピック点は各壁の「残す側」に寄せた ``pick_a`` / ``pick_b``
+    を渡す(壁芯の交点をそのまま渡すと相手壁芯上にあり残す側が曖昧で、VW が L 結合で
+    コーナーを詰めず立上りが相手壁の外面まで伸びたまま残るため。解析フェーズで算出)。
     結合種別は命令の ``join_type``(1=T・2=L・3=X)を joinModifier に、
     命令の ``capped``(天端高さの異なる立上りは結合部を閉じる)を capped に渡す。
     """
@@ -144,9 +146,10 @@ def execute_wall_joins(
         second = handles.get(command['b'])
         if first is None or second is None:
             continue
-        px, py = command['point']
+        ax, ay = command['pick_a']
+        bx, by = command['pick_b']
         vs.JoinWalls(
-            first, second, (px, py), (px, py),
+            first, second, (ax, ay), (bx, by),
             command['join_type'], command['capped'], _JOIN_SHOW_ALERTS)
         count += 1
     return count

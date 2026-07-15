@@ -75,8 +75,9 @@ def make_valid_document() -> dict[str, Any]:
             },
         ],
         'wall_joins': [
-            {'a': 0, 'b': 1, 'point': [0.0, 0.0], 'join_type': 2,
-             'capped': False},
+            {'a': 0, 'b': 1, 'point': [0.0, 0.0],
+             'pick_a': [30.0, 0.0], 'pick_b': [0.0, 30.0],
+             'join_type': 2, 'capped': False},
         ],
         'slabs': [
             {
@@ -332,6 +333,18 @@ class TestValidateDocument:
         document = make_valid_document()
         document['wall_joins'][0]['point'] = [0.0]
         with pytest.raises(DocumentValidationError, match='point'):
+            validate_document(document)
+
+    def test_rejects_wall_join_with_bad_pick_a(self) -> None:
+        document = make_valid_document()
+        document['wall_joins'][0]['pick_a'] = [0.0]
+        with pytest.raises(DocumentValidationError, match='pick_a'):
+            validate_document(document)
+
+    def test_rejects_wall_join_with_bad_pick_b(self) -> None:
+        document = make_valid_document()
+        document['wall_joins'][0]['pick_b'] = 'x'
+        with pytest.raises(DocumentValidationError, match='pick_b'):
             validate_document(document)
 
     def test_rejects_wall_join_with_invalid_join_type(self) -> None:

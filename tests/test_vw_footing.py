@@ -22,7 +22,9 @@ def make_wall_command() -> WallCommand:
 
 
 def make_wall_join_command() -> WallJoinCommand:
-    return {'a': 0, 'b': 1, 'point': [0.0, 0.0], 'join_type': 2, 'capped': False}
+    return {'a': 0, 'b': 1, 'point': [0.0, 0.0],
+            'pick_a': [30.0, 0.0], 'pick_b': [0.0, 30.0],
+            'join_type': 2, 'capped': False}
 
 
 def make_slab_command() -> SlabCommand:
@@ -128,8 +130,10 @@ class TestExecuteWallJoins:
         args = vs_mock.JoinWalls.call_args.args
         assert args[0] == 'WALL_A'
         assert args[1] == 'WALL_B'
-        assert args[2] == (0.0, 0.0)
-        assert args[3] == (0.0, 0.0)
+        # ピック点は各壁の残す側に寄せた pick_a / pick_b を渡す(交点そのものでは
+        # 残す側が曖昧で VW が L 結合でコーナーを詰めないため)
+        assert args[2] == (30.0, 0.0)
+        assert args[3] == (0.0, 30.0)
         assert args[4] == 2       # join_type (L)
         assert args[5] is False   # capped(同じ天端高さ=コンクリート一体で閉じない)
         assert args[6] is False   # showAlerts
