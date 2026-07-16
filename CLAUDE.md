@@ -224,7 +224,7 @@ VW 2026 でレイヤをストーリレベルに正しくバインドするには
 - 解析（`ifc/floor.py` の `build_floor_commands`）: FL ストーリ（`Name` が `FL` で終わる `IfcBuildingStorey`）を Elevation 昇順に走査し、各階の `ContainsElements` から床版（`床版`）を集めてその階の FL レイヤ（`n-FL`）に配置する floor 命令にする。**最上階（屋根）は FL レイヤを持たない（軒高のみ）ため対象外**にする（床板は屋根には無い。フィクスチャでも床版は非最上階の FL 階にのみ現れる）。座標は通り芯・基礎と同じグリッド中心オフセットで補正する。平面外形の取得（`_world_solid`／`_footprint`）は基礎（`ifc/footing.py`）の低レベルヘルパーを再利用する（アンカーボルト・火打が private ヘルパーを再利用するのと同じパターン）。
   - **厚み**: 要件により **24mm 固定**（`FLOOR_THICKNESS`）。IFC の押し出し厚（実際には 28mm 等が出力されている）は使わない。
   - **高さ（床下端＝横架材天端）**: `elevation`（床下端の絶対 Z）を配置階の横架材天端（`storey.Elevation + resolve_beam_top_offset(storey)`＝story.py が `横架材天端` レベルに使うのと同じ値）に一致させ、`bound` で `横架材天端` レベル（`story_offset=0`・`offset=0`）にバインドする。これにより床下端が各階の横架材と同じ高さに乗る（構造材・スラブと同じ高さ基準の与え方）。
-  - **クラス**: 床板＝`04構造-02木造-02床組-04床板`（`CLASS_FLOOR`。大引・根太・床束と同じ床組の階層に置く）。存在しないクラスは VW が自動生成する。
+  - **クラス**: 床板＝`04構造-02木造-06耐力面材-02床`（`CLASS_FLOOR`。大引・根太・床束と同じ床組の階層に置く）。存在しないクラスは VW が自動生成する。
 - 描画（`vw/floor.py` の `execute_floors`／`draw_floor`）: 配置先レイヤ（`n-FL`）をアクティブにし、床ツールで床を作る。**床ツールは `vs.BeginFloor(厚み)` で開始し、2D 図形（平面外形の閉じたポリゴン）を描いてから `vs.EndGroup()` で確定する**（`BeginFloor` の VW 公式ドキュメント: 「2D オブジェクト作成手続きでテンプレートを定義し、`EndGroup` で完了する」）。作成後、床下端を横架材天端（命令の `elevation`、絶対 Z）へ `vs.Move3D(0, 0, elevation)` で移動し（構造材の Move3D と同じ規約）、高さ基準を `vs.SetObjectStoryBound` で `横架材天端` レベルにバインドする（編集時に高さがずれないようにする）。床が作れない場合は外形ポリゴンにフォールバックする。配置先レイヤが存在しない命令はスキップする。実行順は底盤（スラブ）の後・配筋の前（`execute_document`）。**床の高さの与え方（Move3D の絶対 Z・厚みの伸びる向き・`SetObjectStoryBound` のアンカー）は他の要素と同じく VectorWorks 上で最終確認する方針**（床下端＝横架材天端になることを確認する）。床の内部プラグイン挙動（`BeginFloor`／`EndGroup`）は VW 公式スタブ（`vs.py`）と参照スクリプトで確認済み。
 
 ### 配筋（ifc/rebar.py → vw/rebar.py）

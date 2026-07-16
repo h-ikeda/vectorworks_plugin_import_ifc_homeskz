@@ -98,7 +98,7 @@ def make_valid_document() -> dict[str, Any]:
         ],
         'floors': [
             {
-                'layer': '1-FL', 'class': '04構造-02木造-02床組-04床板',
+                'layer': '1-FL', 'class': '04構造-02木造-06耐力面材-02床',
                 'boundary': [[0.0, 0.0], [3000.0, 0.0], [3000.0, 2000.0],
                              [0.0, 2000.0]],
                 'thickness': 24.0, 'elevation': 425.0,

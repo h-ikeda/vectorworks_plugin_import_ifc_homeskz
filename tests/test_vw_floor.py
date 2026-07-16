@@ -11,7 +11,7 @@ from vectorworks_plugin_import_ifc_homeskz.document import FloorCommand
 def make_command() -> FloorCommand:
     return {
         'layer': '1-FL',
-        'class': '04構造-02木造-02床組-04床板',
+        'class': '04構造-02木造-06耐力面材-02床',
         'boundary': [[0.0, 0.0], [3000.0, 0.0], [3000.0, 2000.0], [0.0, 2000.0]],
         'thickness': 24.0,
         'elevation': 425.0,
@@ -67,7 +67,7 @@ class TestExecuteFloors:
         # 床下端を横架材天端(絶対 Z=425)へ移動する
         vs_mock.Move3D.assert_called_once_with(0.0, 0.0, 425.0)
         # クラスを設定する
-        vs_mock.SetClass.assert_called_once_with(floor_h, '04構造-02木造-02床組-04床板')
+        vs_mock.SetClass.assert_called_once_with(floor_h, '04構造-02木造-06耐力面材-02床')
         # 高さ基準を横架材天端レベルにバインドする(boundType=2=Story、index 0)
         vs_mock.SetObjectStoryBound.assert_called_once_with(
             floor_h, 0, 2, 0, '横架材天端', 0.0)
@@ -110,7 +110,7 @@ class TestExecuteFloors:
 
         assert count == 1
         # フォールバックでもクラスは設定する(ポリゴンハンドル=NIL に対して呼ばれる)
-        vs_mock.SetClass.assert_called_once_with(null_handle, '04構造-02木造-02床組-04床板')
+        vs_mock.SetClass.assert_called_once_with(null_handle, '04構造-02木造-06耐力面材-02床')
         # 高さ移動・バインドはフォールバックでは行わない
         vs_mock.Move3D.assert_not_called()
         vs_mock.SetObjectStoryBound.assert_not_called()

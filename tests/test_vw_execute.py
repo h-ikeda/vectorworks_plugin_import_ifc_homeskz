@@ -183,7 +183,7 @@ def make_document() -> dict[str, Any]:
              'bound': {'story_offset': 0, 'level': '底盤天端', 'offset': 0.0}},
         ],
         'floors': [
-            {'layer': '1-FL', 'class': '04構造-02木造-02床組-04床板',
+            {'layer': '1-FL', 'class': '04構造-02木造-06耐力面材-02床',
              'boundary': [[0.0, 0.0], [3000.0, 0.0], [3000.0, 2000.0],
                           [0.0, 2000.0]],
              'thickness': 24.0, 'elevation': 425.0,
