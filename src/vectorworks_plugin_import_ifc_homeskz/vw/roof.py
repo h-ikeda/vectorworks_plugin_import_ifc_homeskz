@@ -19,10 +19,18 @@
    ``vs.EndGroup()`` で確定する。
 5. ``vs.SetZVals`` を退避した値へ復元する(エクスポートも作成後に復元する。
    以降のフェーズのオブジェクト作成へ影響を残さない)。
+6. **高さの自己補正**: 確定した屋根の実際の軸 Z を ``vs.GetRoofFaceCoords`` で
+   実測し、目標(軒の絶対 Z)との差分だけ ``vs.Move3D`` で移動する(床ツールと
+   同じ確定後 Move3D の規約)。ストーリレベルにバインドされたレイヤでは
+   ``SetZVals`` の Z がバインドに上書きされて効かず、屋根の軸がレイヤの高さ
+   (軒高=地廻り)に落ちる(母屋下がりの屋根面が地廻り高さに張り付く不具合)
+   ため、指定値を信じずに実測との差分で補正する。
 
-**確定後の屋根オブジェクトへの後付け操作は ``SetClass`` のみ**とする。以前は
-確定後に ``SetRoofAttributes``(本来 ``CreateRoof`` が返す屋根コンテナ用の関数)で
-厚みを設定していたが、``BeginRoof`` が作る屋根への呼び出しはエクスポートに現れず、
+**確定後の屋根オブジェクトへの後付け操作は、取得系(``GetRoofFaceCoords``/
+``GetRoofFaceAttrib``)・高さ自己補正の差分 ``Move3D``(床ツールで実績のある
+確定後 Move3D と同じ規約)・``SetClass`` に限る**。以前は確定後に
+``SetRoofAttributes``(本来 ``CreateRoof`` が返す屋根コンテナ用の関数)で厚みを
+設定していたが、``BeginRoof`` が作る屋根への呼び出しはエクスポートに現れず、
 未定義動作で VectorWorks 本体がクラッシュする原因と考えられるため呼ばない(#113)。
 
 **屋根が作れたかの判定は ``LNewObj`` の前後比較 + タイプ判別で行う**:
@@ -54,6 +62,25 @@ _POLYGON_TYPE = 5
 # 屋根面の単位法線成分(rise=水平成分 dh・run=鉛直成分 nz)で比(=勾配)は同じため、
 # 比を保ったまま run がこの基準値になるよう正規化して渡す。
 _SLOPE_RUN_UNIT = 25.4
+# 高さの自己補正で「補正不要」とみなす軸 Z の差 (mm)。
+_Z_TOL = 0.5
+
+
+def _roof_face_axis_z(coords: object) -> float | None:
+    """``GetRoofFaceCoords`` の戻り値から屋根面の軸 Z(``Zaxis``)を取り出す。
+
+    公式スタブの Python シグネチャは ``(axis1, axis2, Zaxis, upslope)``(4 要素、
+    点はタプル)だが、環境によっては座標が平坦に展開された 7 要素
+    ``(a1x, a1y, a2x, a2y, Zaxis, upX, upY)`` で返る可能性があるため両方を解釈する。
+    解釈できない場合は None(補正しない)。
+    """
+    if not isinstance(coords, tuple):
+        return None
+    if len(coords) == 4 and isinstance(coords[2], (int, float)):
+        return float(coords[2])
+    if len(coords) == 7 and isinstance(coords[4], (int, float)):
+        return float(coords[4])
+    return None
 
 
 def _draw_footprint(boundary: list[list[float]]) -> None:
@@ -154,6 +181,21 @@ def draw_roof(command: RoofCommand) -> None:
         # そのポリゴンをフォールバック外形として扱う。屋根専用の設定は呼ばない。
         vs.SetClass(roof, command['class'])
         return
+
+    # 高さの自己補正: ストーリレベルにバインドされたレイヤでは SetZVals の Z が
+    # バインドに上書きされ、屋根の軸がレイヤの高さ(軒高=地廻り)に落ちる。
+    # 指定値を信じず、確定した屋根の実際の軸 Z(GetRoofFaceCoords の Zaxis)を
+    # 実測して目標(軒の絶対 Z)との差分だけ Move3D で移動する(確定直後の屋根が
+    # 最後に作成したオブジェクトのため、床ツールの確定後 Move3D と同じ規約)。
+    coords = vs.GetRoofFaceCoords(roof)
+    attrib = vs.GetRoofFaceAttrib(roof)
+    trace(f'draw_roof: coords={coords} attrib={attrib}')
+    z_actual = _roof_face_axis_z(coords)
+    if z_actual is not None and abs(elevation - z_actual) > _Z_TOL:
+        delta = elevation - z_actual
+        trace(f'draw_roof: correcting axis z {z_actual:.1f} -> {elevation:.1f} '
+              f'(Move3D dz={delta:.1f})')
+        vs.Move3D(0.0, 0.0, delta)
 
     trace('draw_roof: SetClass')
     vs.SetClass(roof, command['class'])

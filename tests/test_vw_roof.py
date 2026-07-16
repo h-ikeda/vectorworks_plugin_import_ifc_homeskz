@@ -57,6 +57,10 @@ def _make_vs_mock(
 
     vs_mock.GetObject.side_effect = get_obj
     vs_mock.GetZVals.return_value = _SAVED_Z_VALS
+    # 既定では屋根の軸 Z は目標(軒高 6000)に一致 = 自己補正は不要。
+    vs_mock.GetRoofFaceCoords.return_value = (
+        (0.0, 0.0), (4000.0, 0.0), 6000.0, (0.0, 3000.0))
+    vs_mock.GetRoofFaceAttrib.return_value = (8.467, 25.4, 1, 0, 3.795, 12.0)
 
     calls = {'n': 0}
 
@@ -124,6 +128,57 @@ class TestExecuteRoofs:
         names = [c[0] for c in vs_mock.mock_calls]
         assert names.index('BeginRoof') < names.index('Move3D')
         assert names.index('Move3D') < names.index('EndGroup')
+
+    def test_corrects_axis_z_when_roof_lands_at_layer_height(self) -> None:
+        # ストーリレベルにバインドされたレイヤでは SetZVals の Z が効かず、
+        # 屋根の軸がレイヤの高さ(軒高=地廻り)に落ちる。実測(GetRoofFaceCoords の
+        # Zaxis)と目標(軒の絶対 Z)の差分だけ確定後に Move3D で補正する。
+        vs_mock = _make_vs_mock({'R-野地板'}, created=object())
+        vs_mock.GetRoofFaceCoords.return_value = (
+            (0.0, 0.0), (4000.0, 0.0), 5000.0, (0.0, 3000.0))
+        vw_roof = _load(vs_mock)
+
+        vw_roof.execute_roofs([make_command()])
+
+        # 1 回目 = 作成中の Move3D(0,0,6000)、2 回目 = 自己補正(差分 +1000)。
+        assert vs_mock.Move3D.call_args_list == [
+            call(0.0, 0.0, 6000.0),
+            call(0.0, 0.0, 1000.0),
+        ]
+        names = [c[0] for c in vs_mock.mock_calls]
+        assert names.index('EndGroup') < len(names) - 1 - names[::-1].index(
+            'Move3D')  # 補正の Move3D は EndGroup の後
+
+    def test_corrects_axis_z_with_flat_coords_tuple(self) -> None:
+        # GetRoofFaceCoords が座標を平坦な 7 要素で返す環境でも Zaxis を解釈する。
+        vs_mock = _make_vs_mock({'R-野地板'}, created=object())
+        vs_mock.GetRoofFaceCoords.return_value = (
+            0.0, 0.0, 4000.0, 0.0, 5900.0, 0.0, 3000.0)
+        vw_roof = _load(vs_mock)
+
+        vw_roof.execute_roofs([make_command()])
+
+        assert vs_mock.Move3D.call_args_list[-1] == call(0.0, 0.0, 100.0)
+
+    def test_no_correction_when_coords_unusable(self) -> None:
+        # GetRoofFaceCoords が解釈できない値を返す場合は補正しない
+        # (作成中の Move3D の 1 回だけ)。
+        vs_mock = _make_vs_mock({'R-野地板'}, created=object())
+        vs_mock.GetRoofFaceCoords.return_value = None
+        vw_roof = _load(vs_mock)
+
+        vw_roof.execute_roofs([make_command()])
+
+        assert vs_mock.Move3D.call_args_list == [call(0.0, 0.0, 6000.0)]
+
+    def test_no_correction_when_axis_z_matches(self) -> None:
+        # 実測 Zaxis が目標と一致(既定モック)なら補正の Move3D は行わない。
+        vs_mock = _make_vs_mock({'R-野地板'}, created=object())
+        vw_roof = _load(vs_mock)
+
+        vw_roof.execute_roofs([make_command()])
+
+        assert vs_mock.Move3D.call_args_list == [call(0.0, 0.0, 6000.0)]
 
     def test_sets_class(self) -> None:
         vs_mock = _make_vs_mock({'R-野地板'}, created=object())
