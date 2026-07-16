@@ -4,27 +4,34 @@
 屋根オブジェクトを ``vs.BeginRoof`` で作る。
 
 **呼び出し列は VW 上で屋根を作成したドキュメントの VectorScript エクスポートに
-一致させる**(ユーザー提供のエクスポートで確認した正規手順。#113):
+一致させる**(ユーザー提供のエクスポートで確認した正規手順。#113)。ただし
+**屋根オブジェクトの座標系は作図レイヤ基準(レイヤ相対)**であることが VW 上の
+検証で確認されたため(絶対 Z で補正するとレイヤ高さぶん余計に持ち上がり本来の
+約 2 倍の高さに描画される)、高さはレイヤ相対で扱う:
 
-1. ``vs.GetZVals()`` で作図レイヤの Z/ΔZ を退避し、``vs.SetZVals(軒高, 厚み)`` で
-   屋根作成用の Z 基準(軒の絶対 Z)と厚み(ΔZ=野地板厚)を予約する。**屋根の
-   厚みはこの ΔZ が担う**(エクスポートは ``SetRoofAttributes`` を使わない)。
+1. ``vs.GetZVals()`` で作図レイヤの Z/ΔZ を退避し、``vs.SetZVals(レイヤ Z, 厚み)``
+   で厚み(ΔZ=野地板厚)を予約する。**屋根の厚みはこの ΔZ が担う**(エクスポートは
+   ``SetRoofAttributes`` を使わない)。Z はレイヤの値をそのまま維持する(ストーリ
+   レベルにバインドされたレイヤでは Z の変更はバインドに上書きされて効かないため、
+   バインドの有無に依存しないようはじめから変更しない)。
 2. ``vs.BeginRoof(p1, p2, upslope, rise, run, miter, vertPart)`` で軒(屋根軸)・
    upslope 定義点・勾配を与える。勾配はエクスポートの規約に合わせ
    **run=25.4(1 インチ)あたりの rise** に正規化する(例: 10 度 → rise≈4.479)。
    ``vertPart`` はエクスポートが厚み×sinθ を渡しているため同じ値を計算して渡す。
-3. **``vs.EndGroup()`` の前、``BeginRoof`` 直後に** ``vs.Move3D(0, 0, 軒高)`` で
-   作成中の屋根を軒の絶対 Z へ移動する(エクスポートと同じ順序)。
+3. **``vs.EndGroup()`` の前、``BeginRoof`` 直後に** ``vs.Move3D(0, 0, 目標のレイヤ
+   相対 Z)`` を呼ぶ(エクスポートと同じ順序。実測ではこの移動は適用されないが、
+   適用される環境でも後段の自己補正が差分 0 になるだけで害はない)。
 4. 2D 図形(屋根の水平投影外形の閉じたポリゴン)をテンプレートとして描き、
    ``vs.EndGroup()`` で確定する。
 5. ``vs.SetZVals`` を退避した値へ復元する(エクスポートも作成後に復元する。
    以降のフェーズのオブジェクト作成へ影響を残さない)。
-6. **高さの自己補正**: 確定した屋根の実際の軸 Z を ``vs.GetRoofFaceCoords`` で
-   実測し、目標(軒の絶対 Z)との差分だけ ``vs.Move3D`` で移動する(床ツールと
-   同じ確定後 Move3D の規約)。ストーリレベルにバインドされたレイヤでは
-   ``SetZVals`` の Z がバインドに上書きされて効かず、屋根の軸がレイヤの高さ
-   (軒高=地廻り)に落ちる(母屋下がりの屋根面が地廻り高さに張り付く不具合)
-   ため、指定値を信じずに実測との差分で補正する。
+6. **高さの自己補正**: 確定した屋根の実際の軸 Z(レイヤ相対)を
+   ``vs.GetRoofFaceCoords``(``Zaxis``)で実測し、**目標のレイヤ相対 Z
+   (= 軒の絶対 Z − レイヤの Z)** との差分だけ ``vs.Move3D`` で移動する(床ツールと
+   同じ確定後 Move3D の規約)。屋根はレイヤ平面(バインドされたレイヤでは
+   ストーリレベルの高さ=軒高・地廻り)に作られるため、補正しないと母屋下がりの
+   屋根面が地廻り高さに張り付き、絶対 Z で補正するとレイヤ高さぶん二重に
+   持ち上がる(#113 の検証で確認)。
 
 **確定後の屋根オブジェクトへの後付け操作は、取得系(``GetRoofFaceCoords``/
 ``GetRoofFaceAttrib``)・高さ自己補正の差分 ``Move3D``(床ツールで実績のある
@@ -125,15 +132,19 @@ def draw_roof(command: RoofCommand) -> None:
     slope_len = math.hypot(command['rise'], run)
     vert_part = thickness * command['rise'] / slope_len
 
-    # 作図レイヤの Z/ΔZ を退避し、屋根作成用の Z 基準(軒高)と厚みを予約する。
+    # 作図レイヤの Z/ΔZ を退避し、厚み(ΔZ)だけを予約する。Z はレイヤの値を維持
+    # (バインドされたレイヤでは Z の変更が効かないため、依存しないよう変更しない)。
     z_vals = vs.GetZVals()
     if isinstance(z_vals, tuple) and len(z_vals) == 2:
         saved_z, saved_dz = z_vals
     else:
         saved_z, saved_dz = 0.0, 0.0
-    trace(f'draw_roof: SetZVals z={elevation:.1f} dz={thickness:.1f} '
-          f'(saved z={saved_z:.1f} dz={saved_dz:.1f})')
-    vs.SetZVals(elevation, thickness)
+    # 屋根の座標系はレイヤ基準。目標(軒の絶対 Z)をレイヤ相対に変換して扱う。
+    target_rel = elevation - saved_z
+    trace(f'draw_roof: SetZVals z={saved_z:.1f} dz={thickness:.1f} '
+          f'(saved z={saved_z:.1f} dz={saved_dz:.1f} '
+          f'target_abs={elevation:.1f} target_rel={target_rel:.1f})')
+    vs.SetZVals(saved_z, thickness)
 
     # BeginRoof の成否を判定するため、直前の最終作成オブジェクトを記録する。
     before = vs.LNewObj()
@@ -152,10 +163,11 @@ def draw_roof(command: RoofCommand) -> None:
         _ROOF_MITER,
         vert_part,
     )
-    # 軒(屋根軸)を天端の絶対 Z へ。エクスポートと同じく BeginRoof 直後
-    # (EndGroup の前)に移動する(BeginRoof は軸を Z=0 で作るため)。
-    trace(f'draw_roof: Move3D z={elevation:.1f}')
-    vs.Move3D(0.0, 0.0, elevation)
+    # エクスポートと同じく BeginRoof 直後(EndGroup の前)に軸を目標(レイヤ相対)へ
+    # 移動する(実測ではこの移動は適用されないが、適用される環境でも後段の
+    # 自己補正が差分 0 になるだけで害はない)。
+    trace(f'draw_roof: Move3D z={target_rel:.1f}')
+    vs.Move3D(0.0, 0.0, target_rel)
     trace('draw_roof: drawing footprint')
     _draw_footprint(boundary)
     trace('draw_roof: footprint drawn, EndGroup')
@@ -182,19 +194,20 @@ def draw_roof(command: RoofCommand) -> None:
         vs.SetClass(roof, command['class'])
         return
 
-    # 高さの自己補正: ストーリレベルにバインドされたレイヤでは SetZVals の Z が
-    # バインドに上書きされ、屋根の軸がレイヤの高さ(軒高=地廻り)に落ちる。
-    # 指定値を信じず、確定した屋根の実際の軸 Z(GetRoofFaceCoords の Zaxis)を
-    # 実測して目標(軒の絶対 Z)との差分だけ Move3D で移動する(確定直後の屋根が
-    # 最後に作成したオブジェクトのため、床ツールの確定後 Move3D と同じ規約)。
+    # 高さの自己補正: 屋根はレイヤ平面(バインドされたレイヤではストーリレベルの
+    # 高さ=軒高・地廻り)に作られる。確定した屋根の実際の軸 Z(GetRoofFaceCoords の
+    # Zaxis、レイヤ相対)を実測し、目標のレイヤ相対 Z(軒の絶対 Z − レイヤ Z)との
+    # 差分だけ Move3D で移動する(確定直後の屋根が最後に作成したオブジェクトの
+    # ため、床ツールの確定後 Move3D と同じ規約)。絶対 Z のまま補正するとレイヤ
+    # 高さぶん二重に持ち上がり本来の約 2 倍の高さになる(#113 の検証で確認)。
     coords = vs.GetRoofFaceCoords(roof)
     attrib = vs.GetRoofFaceAttrib(roof)
     trace(f'draw_roof: coords={coords} attrib={attrib}')
     z_actual = _roof_face_axis_z(coords)
-    if z_actual is not None and abs(elevation - z_actual) > _Z_TOL:
-        delta = elevation - z_actual
-        trace(f'draw_roof: correcting axis z {z_actual:.1f} -> {elevation:.1f} '
-              f'(Move3D dz={delta:.1f})')
+    if z_actual is not None and abs(target_rel - z_actual) > _Z_TOL:
+        delta = target_rel - z_actual
+        trace(f'draw_roof: correcting axis z {z_actual:.1f} -> '
+              f'{target_rel:.1f} (rel, Move3D dz={delta:.1f})')
         vs.Move3D(0.0, 0.0, delta)
 
     trace('draw_roof: SetClass')

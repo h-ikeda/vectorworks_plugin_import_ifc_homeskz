@@ -57,9 +57,10 @@ def _make_vs_mock(
 
     vs_mock.GetObject.side_effect = get_obj
     vs_mock.GetZVals.return_value = _SAVED_Z_VALS
-    # 既定では屋根の軸 Z は目標(軒高 6000)に一致 = 自己補正は不要。
+    # 既定では屋根の軸 Z(レイヤ相対)は目標(軒高 6000 − レイヤ Z 100 = 5900)に
+    # 一致 = 自己補正は不要。
     vs_mock.GetRoofFaceCoords.return_value = (
-        (0.0, 0.0), (4000.0, 0.0), 6000.0, (0.0, 3000.0))
+        (0.0, 0.0), (4000.0, 0.0), 5900.0, (0.0, 3000.0))
     vs_mock.GetRoofFaceAttrib.return_value = (8.467, 25.4, 1, 0, 3.795, 12.0)
 
     calls = {'n': 0}
@@ -106,44 +107,46 @@ class TestExecuteRoofs:
             12.0 * 1000.0 / math.hypot(1000.0, 3000.0))
         vs_mock.EndGroup.assert_called_once()
 
-    def test_sets_thickness_and_elevation_via_zvals(self) -> None:
-        # 厚みは SetZVals の ΔZ、Z 基準は軒高。作成後に退避値へ復元する
+    def test_sets_thickness_via_zvals_without_touching_z(self) -> None:
+        # 厚みは SetZVals の ΔZ が担う。Z はレイヤの値を維持し(バインドされた
+        # レイヤでは変更が効かないため依存しない)、作成後に退避値へ復元する
         # (SetRoofAttributes は使わない。エクスポートの正規手順。#113)。
         vs_mock = _make_vs_mock({'R-野地板'}, created=object())
         vw_roof = _load(vs_mock)
         vw_roof.execute_roofs([make_command()])
         assert vs_mock.SetZVals.call_args_list == [
-            call(6000.0, 12.0),
+            call(_SAVED_Z_VALS[0], 12.0),
             call(_SAVED_Z_VALS[0], _SAVED_Z_VALS[1]),
         ]
         vs_mock.SetRoofAttributes.assert_not_called()
 
     def test_moves_to_eaves_elevation_before_end_group(self) -> None:
-        # BeginRoof は軸を Z=0 で作るため、軒の絶対 Z へ Move3D で移動する。
-        # エクスポートと同じく BeginRoof 直後(EndGroup の前)に移動する。
+        # 軒の目標 Z はレイヤ相対(絶対 6000 − レイヤ Z 100 = 5900)。エクスポートと
+        # 同じく BeginRoof 直後(EndGroup の前)に Move3D を呼ぶ。
         vs_mock = _make_vs_mock({'R-野地板'}, created=object())
         vw_roof = _load(vs_mock)
         vw_roof.execute_roofs([make_command()])
-        vs_mock.Move3D.assert_called_once_with(0.0, 0.0, 6000.0)
+        vs_mock.Move3D.assert_called_once_with(0.0, 0.0, 5900.0)
         names = [c[0] for c in vs_mock.mock_calls]
         assert names.index('BeginRoof') < names.index('Move3D')
         assert names.index('Move3D') < names.index('EndGroup')
 
     def test_corrects_axis_z_when_roof_lands_at_layer_height(self) -> None:
-        # ストーリレベルにバインドされたレイヤでは SetZVals の Z が効かず、
-        # 屋根の軸がレイヤの高さ(軒高=地廻り)に落ちる。実測(GetRoofFaceCoords の
-        # Zaxis)と目標(軒の絶対 Z)の差分だけ確定後に Move3D で補正する。
+        # 屋根はレイヤ平面(レイヤ相対 Zaxis=0 = 軒高・地廻り)に作られる。実測
+        # (GetRoofFaceCoords の Zaxis、レイヤ相対)と目標のレイヤ相対 Z
+        # (絶対 6000 − レイヤ Z 100 = 5900)の差分だけ確定後に Move3D で補正する。
         vs_mock = _make_vs_mock({'R-野地板'}, created=object())
         vs_mock.GetRoofFaceCoords.return_value = (
-            (0.0, 0.0), (4000.0, 0.0), 5000.0, (0.0, 3000.0))
+            (0.0, 0.0), (4000.0, 0.0), 1000.0, (0.0, 3000.0))
         vw_roof = _load(vs_mock)
 
         vw_roof.execute_roofs([make_command()])
 
-        # 1 回目 = 作成中の Move3D(0,0,6000)、2 回目 = 自己補正(差分 +1000)。
+        # 1 回目 = 作成中の Move3D(レイヤ相対 5900)、2 回目 = 自己補正
+        # (実測 1000 → 5900 の差分 +4900)。
         assert vs_mock.Move3D.call_args_list == [
-            call(0.0, 0.0, 6000.0),
-            call(0.0, 0.0, 1000.0),
+            call(0.0, 0.0, 5900.0),
+            call(0.0, 0.0, 4900.0),
         ]
         names = [c[0] for c in vs_mock.mock_calls]
         assert names.index('EndGroup') < len(names) - 1 - names[::-1].index(
@@ -153,7 +156,7 @@ class TestExecuteRoofs:
         # GetRoofFaceCoords が座標を平坦な 7 要素で返す環境でも Zaxis を解釈する。
         vs_mock = _make_vs_mock({'R-野地板'}, created=object())
         vs_mock.GetRoofFaceCoords.return_value = (
-            0.0, 0.0, 4000.0, 0.0, 5900.0, 0.0, 3000.0)
+            0.0, 0.0, 4000.0, 0.0, 5800.0, 0.0, 3000.0)
         vw_roof = _load(vs_mock)
 
         vw_roof.execute_roofs([make_command()])
@@ -169,16 +172,16 @@ class TestExecuteRoofs:
 
         vw_roof.execute_roofs([make_command()])
 
-        assert vs_mock.Move3D.call_args_list == [call(0.0, 0.0, 6000.0)]
+        assert vs_mock.Move3D.call_args_list == [call(0.0, 0.0, 5900.0)]
 
     def test_no_correction_when_axis_z_matches(self) -> None:
-        # 実測 Zaxis が目標と一致(既定モック)なら補正の Move3D は行わない。
+        # 実測 Zaxis が目標のレイヤ相対 Z と一致(既定モック)なら補正は行わない。
         vs_mock = _make_vs_mock({'R-野地板'}, created=object())
         vw_roof = _load(vs_mock)
 
         vw_roof.execute_roofs([make_command()])
 
-        assert vs_mock.Move3D.call_args_list == [call(0.0, 0.0, 6000.0)]
+        assert vs_mock.Move3D.call_args_list == [call(0.0, 0.0, 5900.0)]
 
     def test_sets_class(self) -> None:
         vs_mock = _make_vs_mock({'R-野地板'}, created=object())
@@ -255,7 +258,8 @@ class TestExecuteRoofs:
         assert vs_mock.SetClass.call_args.args[0] is poly_handle
 
     def test_restores_zvals_when_getzvals_unavailable(self) -> None:
-        # GetZVals がタプルを返さない環境では既定の (0,0) へ復元する。
+        # GetZVals がタプルを返さない環境では既定の (0,0) を退避値として扱う
+        # (Z=0 のまま厚みだけ設定し、(0,0) へ復元する)。
         vs_mock = _make_vs_mock({'R-野地板'}, created=object())
         vs_mock.GetZVals.return_value = None
         vw_roof = _load(vs_mock)
@@ -263,6 +267,6 @@ class TestExecuteRoofs:
         vw_roof.execute_roofs([make_command()])
 
         assert vs_mock.SetZVals.call_args_list == [
-            call(6000.0, 12.0),
+            call(0.0, 12.0),
             call(0.0, 0.0),
         ]
