@@ -16,6 +16,7 @@ import json
 from .document import validate_document
 from .ifc import build_document, open_ifc
 from .ifc.grid import TARGET_LAYER
+from .tracing import trace
 
 __all__ = ['build_document', 'open_ifc', 'run', 'validate_document']
 
@@ -32,20 +33,28 @@ def run() -> None:
         vs.AlrtDialog('キャンセルされました。')
         return
 
+    # クラッシュ診断用トレース(tracing.py)。無言クラッシュ時にログの最後の行の
+    # 直後の処理がクラッシュ箇所になる。
+    trace(f'=== run start: {filepath}')
+
     try:
         vs.Message('IFCデータを解析中...')
 
         # 解析前にスキーマ非適合のエンティティを除去して開く(基礎の取りこぼし防止)
         ifc_file = open_ifc(filepath)
+        trace('open_ifc done')
 
         # フェーズ1: IFC 解析 → JSON 命令セット
         document = build_document(ifc_file)
+        trace('build_document done')
         # JSON 文字列を経由して受け渡すことで、命令セットが常に
         # 直列化可能(= vs やifcopenshell のオブジェクトを含まない)ことを保証する
         document = json.loads(json.dumps(document))
+        trace('json roundtrip done')
 
         # フェーズ2: 命令セットに従って描画
         counts = execute_document(document)
+        trace(f'execute_document done: {counts}')
 
         # 取り込み結果はモーダルアラートではなくステータスバーに表示する
         # (処理をブロックせず、ユーザーが続けて操作できるようにするため)
@@ -68,5 +77,6 @@ def run() -> None:
         )
 
     except Exception as e:
+        trace(f'python exception: {type(e).__name__}: {e}')
         vs.ClrMessage()
         vs.AlrtDialog(f'エラーが発生しました: {str(e)}')

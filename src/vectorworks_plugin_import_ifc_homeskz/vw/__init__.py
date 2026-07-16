@@ -9,6 +9,7 @@ from __future__ import annotations
 from typing import Any
 
 from ..document import validate_document
+from ..tracing import trace
 from .anchor_bolt import execute_anchor_bolts
 from .column import execute_columns
 from .column_mark import execute_column_marks
@@ -63,38 +64,59 @@ def execute_document(document: Any) -> dict[str, int]:
     member_handles: dict[int, Any] = {}
     # 立上りのハンドルを記録し、壁結合(execute_wall_joins)の関連付けに使う
     wall_handles: dict[int, Any] = {}
-    counts = {
-        'stories': execute_stories(validated['stories']),
-        'grids': execute_grids(validated['grids']),
-        'members': execute_members(validated['members'], member_handles),
-        # 垂木は屋根版から導出した軸組ツール(FramingMember)。母屋の直上の
-        # n-垂木 レイヤに配置する(レイヤは story 命令が生成)。
-        'rafters': execute_rafters(validated['rafters']),
-        # 野地板は屋根版から導出した屋根ツール(BeginRoof)。垂木の直上の
-        # n-野地板 レイヤに配置する(レイヤは story 命令が生成)。
-        'roofs': execute_roofs(validated['roofs']),
-        'columns': execute_columns(validated['columns']),
-        'walls': execute_walls(validated['walls'], wall_handles),
-        # 立上りをすべて配置した後に交差する壁同士を結合する
-        'wall_joins': execute_wall_joins(validated['wall_joins'], wall_handles),
-        'slabs': execute_slabs(validated['slabs']),
-        # 床板(床ツール)は各階の FL レイヤに配置する
-        'floors': execute_floors(validated['floors']),
-        # 基礎の配筋(鉄筋 PIO)は立上り・底盤と同じレイヤに重ねる
-        'rebars': execute_rebars(validated['rebars']),
-        'anchor_bolts': execute_anchor_bolts(validated['anchor_bolts']),
-        'floor_posts': execute_floor_posts(validated['floor_posts']),
-        'fire_braces': execute_fire_braces(validated['fire_braces']),
-        # 仕口(受ける材のある横架材端部のシンボル)は横架材レイヤに配置する
-        'joints': execute_joints(validated['joints']),
-        # 下階柱記号は直下階の柱を検索するため柱の描画後に配置する
-        'column_marks': execute_column_marks(validated['column_marks']),
-    }
+    # 各フェーズの前後にクラッシュ診断用トレース(tracing.py)を記録する。無言
+    # クラッシュ時にログの最後の行の直後のフェーズがクラッシュ箇所になる。
+    counts: dict[str, int] = {}
+    trace('execute_stories start')
+    counts['stories'] = execute_stories(validated['stories'])
+    trace('execute_grids start')
+    counts['grids'] = execute_grids(validated['grids'])
+    trace('execute_members start')
+    counts['members'] = execute_members(validated['members'], member_handles)
+    # 垂木は屋根版から導出した軸組ツール(FramingMember)。母屋の直上の
+    # n-垂木 レイヤに配置する(レイヤは story 命令が生成)。
+    trace('execute_rafters start')
+    counts['rafters'] = execute_rafters(validated['rafters'])
+    # 野地板は屋根版から導出した屋根ツール(BeginRoof)。垂木の直上の
+    # n-野地板 レイヤに配置する(レイヤは story 命令が生成)。
+    trace('execute_roofs start')
+    counts['roofs'] = execute_roofs(validated['roofs'])
+    trace('execute_columns start')
+    counts['columns'] = execute_columns(validated['columns'])
+    trace('execute_walls start')
+    counts['walls'] = execute_walls(validated['walls'], wall_handles)
+    # 立上りをすべて配置した後に交差する壁同士を結合する
+    trace('execute_wall_joins start')
+    counts['wall_joins'] = execute_wall_joins(
+        validated['wall_joins'], wall_handles)
+    trace('execute_slabs start')
+    counts['slabs'] = execute_slabs(validated['slabs'])
+    # 床板(床ツール)は各階の FL レイヤに配置する
+    trace('execute_floors start')
+    counts['floors'] = execute_floors(validated['floors'])
+    # 基礎の配筋(鉄筋 PIO)は立上り・底盤と同じレイヤに重ねる
+    trace('execute_rebars start')
+    counts['rebars'] = execute_rebars(validated['rebars'])
+    trace('execute_anchor_bolts start')
+    counts['anchor_bolts'] = execute_anchor_bolts(validated['anchor_bolts'])
+    trace('execute_floor_posts start')
+    counts['floor_posts'] = execute_floor_posts(validated['floor_posts'])
+    trace('execute_fire_braces start')
+    counts['fire_braces'] = execute_fire_braces(validated['fire_braces'])
+    # 仕口(受ける材のある横架材端部のシンボル)は横架材レイヤに配置する
+    trace('execute_joints start')
+    counts['joints'] = execute_joints(validated['joints'])
+    # 下階柱記号は直下階の柱を検索するため柱の描画後に配置する
+    trace('execute_column_marks start')
+    counts['column_marks'] = execute_column_marks(validated['column_marks'])
+    trace('reorder_story_layers start')
     reorder_story_layers(validated['stories'])
     counters: dict[str, int] = {}
+    trace('execute_sheets start')
     counts['sheets'] = execute_sheets(
         validated['sheets'], validated['tags'], member_handles, counters,
         validated['legends'])
     counts['tags'] = counters.get('tags', 0)
     counts['legends'] = counters.get('legends', 0)
+    trace('execute_document phases done')
     return counts
