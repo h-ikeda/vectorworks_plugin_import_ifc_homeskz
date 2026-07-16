@@ -2,8 +2,11 @@
 from __future__ import annotations
 
 import importlib
+import math
 from typing import Any
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock, call, patch
+
+import pytest
 
 from vectorworks_plugin_import_ifc_homeskz.document import RoofCommand
 
@@ -11,6 +14,8 @@ from vectorworks_plugin_import_ifc_homeskz.document import RoofCommand
 _POLYGON_TYPE = 5
 # 屋根オブジェクトのタイプ番号(ポリゴン以外なら何でもよい。実値は VW 依存)。
 _ROOF_TYPE = 89
+# 退避・復元される作図レイヤの Z/ΔZ(モックの GetZVals が返す値)。
+_SAVED_Z_VALS = (100.0, 20.0)
 
 
 def make_command() -> RoofCommand:
@@ -51,6 +56,7 @@ def _make_vs_mock(
         return ('HANDLE_' + name) if name in existing_layers else null_handle
 
     vs_mock.GetObject.side_effect = get_obj
+    vs_mock.GetZVals.return_value = _SAVED_Z_VALS
 
     calls = {'n': 0}
 
@@ -87,30 +93,37 @@ class TestExecuteRoofs:
         assert args[0] == (0.0, 0.0)       # axis_start (p1)
         assert args[1] == (4000.0, 0.0)    # axis_end (p2)
         assert args[2] == (0.0, 3000.0)    # upslope
-        assert args[3] == 1000.0           # rise
-        assert args[4] == 3000.0           # run
+        # rise/run は比(勾配)を保ったまま run=25.4(1 インチ)基準に正規化して渡す
+        # (VW のエクスポートの規約。命令の rise=1000/run=3000 → rise=8.466…)。
+        assert args[3] == pytest.approx(1000.0 * 25.4 / 3000.0)  # rise
+        assert args[4] == 25.4                                   # run
+        # vertPart = 厚み×sinθ(エクスポートと同じ計算)。
+        assert args[6] == pytest.approx(
+            12.0 * 1000.0 / math.hypot(1000.0, 3000.0))
         vs_mock.EndGroup.assert_called_once()
 
-    def test_sets_thickness_via_roof_attributes(self) -> None:
-        roof_handle = object()
-        vs_mock = _make_vs_mock({'R-野地板'}, created=roof_handle)
+    def test_sets_thickness_and_elevation_via_zvals(self) -> None:
+        # 厚みは SetZVals の ΔZ、Z 基準は軒高。作成後に退避値へ復元する
+        # (SetRoofAttributes は使わない。エクスポートの正規手順。#113)。
+        vs_mock = _make_vs_mock({'R-野地板'}, created=object())
         vw_roof = _load(vs_mock)
         vw_roof.execute_roofs([make_command()])
-        # 厚みは SetRoofAttributes の 4 番目(roofThickDistance)引数に 12mm。
-        vs_mock.SetRoofAttributes.assert_called_once()
-        assert vs_mock.SetRoofAttributes.call_args.args[0] is roof_handle
-        assert vs_mock.SetRoofAttributes.call_args.args[3] == 12.0
+        assert vs_mock.SetZVals.call_args_list == [
+            call(6000.0, 12.0),
+            call(_SAVED_Z_VALS[0], _SAVED_Z_VALS[1]),
+        ]
+        vs_mock.SetRoofAttributes.assert_not_called()
 
-    def test_moves_to_eaves_elevation(self) -> None:
-        roof_handle = object()
-        vs_mock = _make_vs_mock({'R-野地板'}, created=roof_handle)
+    def test_moves_to_eaves_elevation_before_end_group(self) -> None:
+        # BeginRoof は軸を Z=0 で作るため、軒の絶対 Z へ Move3D で移動する。
+        # エクスポートと同じく BeginRoof 直後(EndGroup の前)に移動する。
+        vs_mock = _make_vs_mock({'R-野地板'}, created=object())
         vw_roof = _load(vs_mock)
         vw_roof.execute_roofs([make_command()])
-        # BeginRoof は軸を Z=0 で作るため、軒の絶対 Z へ移動する。対象を明示する
-        # ためハンドル指定の Move3DObj を使う(Move3D は最後に作成した 3D
-        # オブジェクトが対象で、意図しないオブジェクトを動かすおそれがある)。
-        vs_mock.Move3DObj.assert_called_once_with(roof_handle, 0.0, 0.0, 6000.0)
-        vs_mock.Move3D.assert_not_called()
+        vs_mock.Move3D.assert_called_once_with(0.0, 0.0, 6000.0)
+        names = [c[0] for c in vs_mock.mock_calls]
+        assert names.index('BeginRoof') < names.index('Move3D')
+        assert names.index('Move3D') < names.index('EndGroup')
 
     def test_sets_class(self) -> None:
         vs_mock = _make_vs_mock({'R-野地板'}, created=object())
@@ -119,12 +132,15 @@ class TestExecuteRoofs:
         vs_mock.SetClass.assert_called_once()
         assert vs_mock.SetClass.call_args.args[1] == '04構造-02木造-06耐力面材-03屋根'
 
-    def test_does_not_reset_roof_object(self) -> None:
-        # 屋根(非パラメトリックオブジェクト)への ResetObject は呼ばない
-        # (未定義動作でクラッシュの一因になりうるため。#113)。
+    def test_does_not_touch_finished_roof_except_class(self) -> None:
+        # 確定後の屋根への後付け操作は SetClass のみ(SetRoofAttributes・
+        # Move3DObj・ResetObject は未定義動作でクラッシュの一因になるため
+        # 呼ばない。#113)。
         vs_mock = _make_vs_mock({'R-野地板'}, created=object())
         vw_roof = _load(vs_mock)
         vw_roof.execute_roofs([make_command()])
+        vs_mock.SetRoofAttributes.assert_not_called()
+        vs_mock.Move3DObj.assert_not_called()
         vs_mock.ResetObject.assert_not_called()
 
     def test_skips_when_layer_missing(self) -> None:
@@ -143,16 +159,33 @@ class TestExecuteRoofs:
 
         count = vw_roof.execute_roofs([make_command()])
 
-        # フォールバックでも配置数には数える。SetRoofAttributes は呼ばれない。
+        # フォールバックでも配置数には数える。屋根専用の設定は呼ばれない。
         assert count == 1
         vs_mock.SetRoofAttributes.assert_not_called()
+        vs_mock.LineTo.assert_called()
+        # レイヤの Z/ΔZ は復元される。
+        assert vs_mock.SetZVals.call_args_list[-1] == call(
+            _SAVED_Z_VALS[0], _SAVED_Z_VALS[1])
+
+    def test_degenerate_run_falls_back_without_begin_roof(self) -> None:
+        # run<=0(鉛直面等の退化した命令)は勾配が定まらないため BeginRoof を
+        # 呼ばず、外形ポリゴンのフォールバックにとどめる。
+        vs_mock = _make_vs_mock({'R-野地板'}, created=None)
+        vw_roof = _load(vs_mock)
+        command = make_command()
+        command['run'] = 0.0
+
+        count = vw_roof.execute_roofs([command])
+
+        assert count == 1
+        vs_mock.BeginRoof.assert_not_called()
+        vs_mock.SetZVals.assert_not_called()
         vs_mock.LineTo.assert_called()
 
     def test_leftover_template_polygon_is_not_treated_as_roof(self) -> None:
         # BeginRoof が屋根を作れずテンプレートの外形ポリゴンだけが残った場合、
-        # LNewObj は NIL ではなくそのポリゴンを返す。ポリゴンを屋根と誤認して
-        # SetRoofAttributes / Move3DObj を呼ぶと VW がクラッシュするため(#113)、
-        # タイプ判別でフォールバック扱いにし、クラス設定だけを行う。
+        # LNewObj は NIL ではなくそのポリゴンを返す。ポリゴンを屋根と誤認しない
+        # ようタイプ判別でフォールバック扱いにし、クラス設定だけを行う(#113)。
         poly_handle = object()
         vs_mock = _make_vs_mock(
             {'R-野地板'}, created=poly_handle, created_type=_POLYGON_TYPE)
@@ -165,3 +198,16 @@ class TestExecuteRoofs:
         vs_mock.Move3DObj.assert_not_called()
         vs_mock.SetClass.assert_called_once()
         assert vs_mock.SetClass.call_args.args[0] is poly_handle
+
+    def test_restores_zvals_when_getzvals_unavailable(self) -> None:
+        # GetZVals がタプルを返さない環境では既定の (0,0) へ復元する。
+        vs_mock = _make_vs_mock({'R-野地板'}, created=object())
+        vs_mock.GetZVals.return_value = None
+        vw_roof = _load(vs_mock)
+
+        vw_roof.execute_roofs([make_command()])
+
+        assert vs_mock.SetZVals.call_args_list == [
+            call(6000.0, 12.0),
+            call(0.0, 0.0),
+        ]

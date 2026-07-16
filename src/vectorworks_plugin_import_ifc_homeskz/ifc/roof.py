@@ -64,6 +64,10 @@ def _roof_command_for_plane(
     dh = math.hypot(nx, ny)
     if dh <= _FLAT_TOL:
         return None
+    if nz <= _FLAT_TOL:
+        # 鉛直な面(法線が水平)は勾配・天端 Z が定まらない(平面式 z_at が nz で
+        # 除算する)ため屋根オブジェクトを作らない。
+        return None
     # 勾配方向 d(最急降下=水平法線方向)。+d へ進むと天端 Z は下がる(軒側)。
     dx, dy = nx / dh, ny / dh
     # 軒・棟に平行な方向 e(勾配方向に直交)。
