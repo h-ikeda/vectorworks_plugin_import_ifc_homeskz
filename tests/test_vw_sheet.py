@@ -215,6 +215,25 @@ class TestExecuteSheets:
         for name in classes:
             assert ('VP_HANDLE', name, vw_sheet._VP_CLASS_VISIBLE) in cls_calls
 
+    def test_hides_named_classes(self) -> None:
+        rebar = '04構造-01基礎-04配筋'
+        classes = ['なし', '04構造-01基礎-03立ち上がり', rebar]
+        vs_mock = _make_vs_mock(_TARGET_LAYERS, classes=classes)
+        vw_sheet = _load(vs_mock)
+
+        command = make_command()
+        command['viewport']['hidden_classes'] = [rebar]
+        vw_sheet.execute_sheets([command])
+
+        cls_calls = [c.args for c in vs_mock.SetVPClassVisibility.call_args_list]
+        # hidden_classes に挙げた配筋クラスは非表示 (1) にする
+        assert ('VP_HANDLE', rebar, vw_sheet._VP_CLASS_HIDDEN) in cls_calls
+        assert ('VP_HANDLE', rebar, vw_sheet._VP_CLASS_VISIBLE) not in cls_calls
+        # それ以外のクラスは従来どおり表示 (0)
+        for name in ['なし', '04構造-01基礎-03立ち上がり']:
+            assert ('VP_HANDLE', name, vw_sheet._VP_CLASS_VISIBLE) in cls_calls
+            assert ('VP_HANDLE', name, vw_sheet._VP_CLASS_HIDDEN) not in cls_calls
+
     def test_matches_viewport_scale_to_design_layer(self) -> None:
         vs_mock = _make_vs_mock(_TARGET_LAYERS)
         vw_sheet = _load(vs_mock)

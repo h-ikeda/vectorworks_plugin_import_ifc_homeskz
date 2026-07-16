@@ -234,7 +234,11 @@
                     "drawing_number": "1",        # ビューポートの図番
                     # ビューポートに表示するデザインレイヤ名。ここに挙げたレイヤだけを
                     # 表示し、それ以外のデザインレイヤは非表示にする。
-                    "layers": ["F-底盤", "F-立上り", "F-アンカーボルト", "共通"]
+                    "layers": ["F-底盤", "F-立上り", "F-アンカーボルト", "共通"],
+                    # このビューポートで非表示にするクラス名(省略可)。表示レイヤに
+                    # 乗っていても、ここに挙げたクラスの図形だけは非表示にする
+                    # (例: 基礎伏図では配筋クラスを隠し、断面でのみ表示する)。
+                    "hidden_classes": ["04構造-01基礎-04配筋"]
                 }
             }
         ],
@@ -607,17 +611,24 @@ class FireBraceCommand(TypedDict):
     angle: float
 
 
-class ViewportCommand(TypedDict):
+class _ViewportBase(TypedDict):
+    drawing_title: str
+    drawing_number: str
+    layers: list[str]
+
+
+class ViewportCommand(_ViewportBase, total=False):
     """シート上に配置するビューポート 1 つ分。
 
     drawing_title / drawing_number はビューポートの図面タイトル・図番。layers は
     ビューポートに表示するデザインレイヤ名の並び。ここに挙げたレイヤだけを表示し、
-    それ以外のデザインレイヤは非表示にする。
+    それ以外のデザインレイヤは非表示にする。hidden_classes は表示レイヤに乗っていても
+    非表示にするクラス名の並び(省略可・既定は非表示クラス無し)。クラスは伏図に必要な
+    要素が欠けないよう既定で全表示だが、ここに挙げたクラスの図形だけは非表示にする
+    (例: 基礎伏図では配筋クラスを隠し、断面でのみ表示する)。
     """
 
-    drawing_title: str
-    drawing_number: str
-    layers: list[str]
+    hidden_classes: list[str]
 
 
 class SheetCommand(TypedDict):
@@ -1006,6 +1017,13 @@ def _validate_viewport(where: str, viewport: Any) -> None:
     for j, layer in enumerate(layers):
         _require(isinstance(layer, str) and layer,
                  f'{field}.layers[{j}] は非空文字列である必要があります')
+    hidden_classes = viewport.get('hidden_classes')
+    if hidden_classes is not None:
+        _require(isinstance(hidden_classes, list),
+                 f'{field}.hidden_classes はリストである必要があります')
+        for j, name in enumerate(hidden_classes):
+            _require(isinstance(name, str) and name,
+                     f'{field}.hidden_classes[{j}] は非空文字列である必要があります')
 
 
 def _validate_sheet(index: int, command: Any) -> None:

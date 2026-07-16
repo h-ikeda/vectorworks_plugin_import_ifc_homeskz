@@ -3,7 +3,9 @@
 各 sheet 命令について、シートレイヤ(プレゼンテーションレイヤ)を作成し、その上に
 指定したデザインレイヤ群を表示するビューポートを 1 つ配置する。ビューポートには
 命令の ``layers`` に挙げたデザインレイヤだけを表示し、それ以外のデザインレイヤは
-非表示にする。クラスは伏図に必要な要素が欠けないよう全クラスを表示にする。
+非表示にする。クラスは伏図に必要な要素が欠けないよう既定で全表示だが、命令の
+``hidden_classes`` に挙げたクラスは非表示にする(表示レイヤに乗っていてもそのクラス
+だけ隠す。例: 基礎伏図の配筋クラス)。
 ビューポートの縮尺は表示するデザインレイヤの縮尺に合わせる。ビューは 2D/平面
 (Top/Plan)投影に確定させる(``force_plan_view``。インポート直後に 3D の「上」
 ビューのように描画される不具合を防ぐ)。
@@ -88,6 +90,7 @@ _VP_LAYER_HIDDEN = 1
 
 # ビューポートのクラス表示種別(SetVPClassVisibility): 0=表示, 1=非表示, 2=グレー
 _VP_CLASS_VISIBLE = 0
+_VP_CLASS_HIDDEN = 1
 
 # ビューポートのビュー(投影)を制御するオブジェクト変数 selector(公式のオブジェクト
 # セレクタ一覧より)。「2D/平面」(Top/Plan)は View Type の列挙値ではなく
@@ -123,16 +126,23 @@ def configure_viewport_layers(
             vs.SetVPLayerVisibility(viewport, target_h, _VP_LAYER_VISIBLE)
 
 
-def configure_viewport_classes(viewport: Any) -> None:
-    """ビューポートで全クラスを表示にする。
+def configure_viewport_classes(
+    viewport: Any, hidden_classes: list[str] | None = None,
+) -> None:
+    """ビューポートでクラスの表示/非表示を設定する。
 
     ビューポートは既定で一部クラスが非表示になることがあるため、ドキュメントの
     全クラス(``ClassNum``/``ClassList``)を辿って表示に設定する。表示レイヤは
     ``configure_viewport_layers`` で絞り込むが、クラスは伏図に必要な要素が欠けない
-    よう全て表示する。
+    よう既定で全て表示する。ただし ``hidden_classes`` に挙げたクラスは非表示にする
+    (表示レイヤに乗っていてもそのクラスの図形だけ隠す。例: 基礎伏図の配筋クラスを
+    隠し、断面でのみ表示する)。
     """
+    hidden = set(hidden_classes or [])
     for i in range(1, vs.ClassNum() + 1):
-        vs.SetVPClassVisibility(viewport, vs.ClassList(i), _VP_CLASS_VISIBLE)
+        name = vs.ClassList(i)
+        visibility = _VP_CLASS_HIDDEN if name in hidden else _VP_CLASS_VISIBLE
+        vs.SetVPClassVisibility(viewport, name, visibility)
 
 
 def configure_viewport_scale(viewport: Any, target_layers: list[str]) -> None:
@@ -180,7 +190,7 @@ def draw_viewport(
         return None
     vs.SetName(obj, viewport['drawing_title'])
     configure_viewport_layers(obj, viewport['layers'], sheet_layer)
-    configure_viewport_classes(obj)
+    configure_viewport_classes(obj, viewport.get('hidden_classes'))
     configure_viewport_scale(obj, viewport['layers'])
     force_plan_view(obj)
     vs.SetObjectVariableString(obj, _OV_VP_DRAWING_TITLE, viewport['drawing_title'])
