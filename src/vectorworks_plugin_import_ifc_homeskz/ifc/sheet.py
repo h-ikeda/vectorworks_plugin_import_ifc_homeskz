@@ -12,6 +12,9 @@
   レイヤが生成されずビューポートが空になるため)。シートレイヤ番号 ``1``・タイトル
   ``基礎伏図``、表示レイヤは 底盤(``F-底盤``)・立上り(``F-立上り``)・
   床束(``F-床束``)・アンカーボルト(``F-アンカーボルト``)・通り芯(``共通``)。
+  配筋(鉄筋 PIO)は立上り・底盤と同じレイヤに重ねて配置されるためレイヤでは絞れず、
+  基礎伏図では配筋クラス(``04構造-01基礎-04配筋``)をビューポート単位で非表示に
+  する(断面でのみ表示する要件)。
 - **各階の柱梁伏図**(``build_floor_framing_sheet_commands``): ストーリごとに 1 枚。
   シートレイヤ番号は基礎伏図(``1``)に続けて ``2`` から順に振る。タイトルは
   最下階から ``1階床伏図``・``2階床伏図``・…、最上階は主屋根が架かる階番号を付けた
@@ -50,6 +53,7 @@ from ..document import (
 from .anchor_bolt import SYMBOL_M12, SYMBOL_M16
 from .footing import has_foundation
 from .grid import TARGET_LAYER
+from .rebar import CLASS_REBAR
 from .story import (
     LAYER_FOUNDATION_ANCHOR,
     LAYER_FOUNDATION_FLOOR_POST,
@@ -83,6 +87,10 @@ FOUNDATION_PLAN_LAYERS = [
     LAYER_FOUNDATION_ANCHOR,
     TARGET_LAYER,
 ]
+# 基礎伏図で非表示にするクラス。配筋(鉄筋 PIO)は立上り・底盤と同じレイヤに重ねて
+# 配置されるためレイヤでは絞れない。基礎伏図では配筋を隠し、断面でのみ表示する
+# (要件)ため配筋クラスをビューポート単位で非表示にする。
+FOUNDATION_PLAN_HIDDEN_CLASSES = [CLASS_REBAR]
 
 # 基礎伏図のグラフィック凡例の構成。基礎伏図ビューポートに表示されるシンボル
 # (既定ではアンカーボルト)の凡例を配置する。
@@ -117,7 +125,9 @@ def build_foundation_sheet_commands(
     """基礎伏図シートの sheet 命令を組み立てて返す。
 
     基礎要素が存在する場合に基礎伏図シートを 1 枚だけ返す。基礎が無ければ
-    空リストを返す(表示すべき基礎レイヤが生成されないため)。
+    空リストを返す(表示すべき基礎レイヤが生成されないため)。ビューポートは
+    配筋クラス(``FOUNDATION_PLAN_HIDDEN_CLASSES``)を非表示にする(配筋は
+    立上り・底盤と同じレイヤに重なるためレイヤでは絞れず、断面でのみ表示する要件)。
     """
     if not has_foundation(ifc_file):
         return []
@@ -128,6 +138,7 @@ def build_foundation_sheet_commands(
             'drawing_title': FOUNDATION_PLAN_SHEET_TITLE,
             'drawing_number': FOUNDATION_PLAN_SHEET_NUMBER,
             'layers': list(FOUNDATION_PLAN_LAYERS),
+            'hidden_classes': list(FOUNDATION_PLAN_HIDDEN_CLASSES),
         },
     }]
 

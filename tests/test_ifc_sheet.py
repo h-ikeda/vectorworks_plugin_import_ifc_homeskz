@@ -42,6 +42,19 @@ class TestBuildFoundationSheetCommands:
         assert viewport['layers'] == [
             'F-底盤', 'F-立上り', 'F-床束', 'F-アンカーボルト', '共通']
 
+    def test_viewport_hides_rebar_class(self) -> None:
+        # 配筋は立上り・底盤と同じレイヤに重なるためレイヤでは絞れない。基礎伏図では
+        # 配筋クラスをビューポート単位で非表示にする(断面でのみ表示する要件)。
+        ifc = _open('伏図次郎【2階】.ifc')
+        viewport = sheet.build_foundation_sheet_commands(ifc)[0]['viewport']
+        assert viewport['hidden_classes'] == ['04構造-01基礎-04配筋']
+
+    def test_floor_framing_viewport_hides_no_class(self) -> None:
+        # 柱梁伏図は配筋を隠さない(基礎伏図のみ配筋を非表示にする)
+        ifc = _open('伏図次郎【2階】.ifc')
+        for command in sheet.build_floor_framing_sheet_commands(ifc):
+            assert 'hidden_classes' not in command['viewport']
+
 
 class TestBuildFloorFramingSheetCommands:
     def test_no_sheet_without_stories(self) -> None:
