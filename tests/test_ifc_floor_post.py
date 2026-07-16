@@ -82,6 +82,63 @@ class TestShinReference:
         assert floor_post._shin_reference(52.5, 5000.0, 1.0, 0.0, self.SUPPORT) is None
 
 
+class TestMergeCollinear:
+    def test_gap_none_when_not_parallel(self) -> None:
+        # 直交する大引はすき間なし(None)
+        a = (0.0, 0.0, 1000.0, 0.0)
+        b = (500.0, 0.0, 500.0, 1000.0)
+        assert floor_post._collinear_gap(a, b) is None
+
+    def test_gap_none_when_offset_line(self) -> None:
+        # 平行だが別の直線上(直交距離あり)はすき間なし(None)
+        a = (0.0, 0.0, 1000.0, 0.0)
+        b = (1200.0, 50.0, 2000.0, 50.0)
+        assert floor_post._collinear_gap(a, b) is None
+
+    def test_gap_between_collinear_segments(self) -> None:
+        # 同一直線上・105mm すき間(継手)
+        a = (0.0, 0.0, 1000.0, 0.0)
+        b = (1105.0, 0.0, 2000.0, 0.0)
+        gap = floor_post._collinear_gap(a, b)
+        assert gap is not None
+        assert abs(gap - 105.0) < 1e-6
+
+    def test_gap_zero_when_touching(self) -> None:
+        a = (0.0, 0.0, 1000.0, 0.0)
+        b = (1000.0, 0.0, 2000.0, 0.0)
+        assert floor_post._collinear_gap(a, b) == 0.0
+
+    def test_joint_merged_into_one_run(self) -> None:
+        # 継手(105mm すき間)で分断された 3 本は 1 連(0〜4105)に統合される
+        lines = [
+            (0.0, 0.0, 1000.0, 0.0),
+            (1105.0, 0.0, 2000.0, 0.0),
+            (2105.0, 0.0, 4105.0, 0.0),
+        ]
+        runs = floor_post._merge_collinear_ohbiki(lines)
+        assert len(runs) == 1
+        sx, sy, ex, ey = runs[0]
+        assert abs(sx - 0.0) < 1e-6 and abs(ex - 4105.0) < 1e-6
+        assert abs(sy) < 1e-6 and abs(ey) < 1e-6
+
+    def test_distant_collinear_not_merged(self) -> None:
+        # 同一直線上でも 1 モジュール以上離れた大引は別材(統合しない)
+        lines = [
+            (0.0, 0.0, 1000.0, 0.0),
+            (2000.0, 0.0, 3000.0, 0.0),   # すき間 1000mm > 半モジュール
+        ]
+        runs = floor_post._merge_collinear_ohbiki(lines)
+        assert len(runs) == 2
+
+    def test_perpendicular_not_merged(self) -> None:
+        lines = [
+            (0.0, 0.0, 1000.0, 0.0),
+            (500.0, 0.0, 500.0, 1000.0),
+        ]
+        runs = floor_post._merge_collinear_ohbiki(lines)
+        assert len(runs) == 2
+
+
 class TestBuildFromFixture:
     FILENAME = '伏図次郎【2階】.ifc'
 
@@ -116,44 +173,33 @@ class TestBuildFromFixture:
         # 大引を含めるため、支持材数は土台のみより多い
         assert len(supports) > dodai
 
-    def test_posts_measured_from_support_shin(self) -> None:
-        # 床束の総数は各大引の「支持材芯どうしの区間」に _post_offsets を適用した
-        # 合計と一致する(端部=実部材端ではなく支持材芯。910mm 以下の区間は 0 本)。
-        from vectorworks_plugin_import_ifc_homeskz.ifc.member import (
-            _get_placement_3d,
-            _get_profile_dims,
-        )
-        from vectorworks_plugin_import_ifc_homeskz.ifc.structural_class import (
-            CLASS_OOBIKI,
-            member_class_from_name,
-        )
+    def test_collinear_ohbiki_are_merged(self) -> None:
+        # 継手で分断された大引が統合され、連の数は元の大引本数より少なくなる
+        ifc = _open(self.FILENAME)
+        lines = floor_post._collect_ohbiki_lines(ifc)
+        runs = floor_post._merge_collinear_ohbiki(lines)
+        assert len(lines) > 0
+        assert len(runs) < len(lines)
 
+    def test_posts_measured_from_merged_run_shin(self) -> None:
+        # 床束の総数は「継手統合後の大引 1 連の支持材芯どうしの区間」に _post_offsets を
+        # 適用した合計と一致する(継手は端部として扱わず、支持材芯を端部にする)。
         ifc = _open(self.FILENAME)
         supports = floor_post._collect_support_lines(ifc)
-        ohbiki = 0
+        runs = floor_post._merge_collinear_ohbiki(floor_post._collect_ohbiki_lines(ifc))
         expected = 0
-        for element in list(ifc.by_type('IfcBeam')) + list(ifc.by_type('IfcMember')):
-            if member_class_from_name(element.Name) != CLASS_OOBIKI:
-                continue
-            placement = _get_placement_3d(element)
-            dims = _get_profile_dims(element)
-            if placement is None or dims is None:
-                continue
-            ohbiki += 1
-            ox, oy, _oz, ax, ay, _az = placement
-            _width, _height, length = dims
-            ex, ey = ox + ax * length, oy + ay * length
-            seg = math.hypot(ex - ox, ey - oy)
+        for sx, sy, ex, ey in runs:
+            seg = math.hypot(ex - sx, ey - sy)
             if seg <= 0.0:
                 continue
-            ux, uy = (ex - ox) / seg, (ey - oy) / seg
-            start = floor_post._shin_reference(ox, oy, ux, uy, supports) or (ox, oy)
+            ux, uy = (ex - sx) / seg, (ey - sy) / seg
+            start = floor_post._shin_reference(sx, sy, ux, uy, supports) or (sx, sy)
             end = floor_post._shin_reference(ex, ey, ux, uy, supports) or (ex, ey)
             span = (end[0] - start[0]) * ux + (end[1] - start[1]) * uy
             expected += len(floor_post._post_offsets(span))
 
         posts = floor_post.build_floor_post_commands(ifc)
-        assert ohbiki > 0
+        assert len(runs) > 0
         assert expected > 0
         assert len(posts) == expected
 

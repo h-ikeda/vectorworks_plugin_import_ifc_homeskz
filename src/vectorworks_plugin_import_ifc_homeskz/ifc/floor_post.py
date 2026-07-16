@@ -6,7 +6,12 @@
 
 - 対象: ``Name`` の種別が ``大引``(``member_class_from_name`` が
   ``CLASS_OOBIKI`` を返す)の IfcBeam / IfcMember。
-- 配置の基準(端部): 大引の**実部材端**ではなく、**その端を受けている支持材の芯**
+- 継手の統合: ホームズ君 IFC の大引は継手(支持材の上での継目)で分断されているが、
+  継手は実際の大引の端ではない。**同一直線上で継手(すき間 ≤ 半モジュール)で分断
+  された大引は 1 連に統合**してから配置を計算する(``_merge_collinear_ohbiki``。継手は
+  無いものとして 910mm 間隔を通しで割り付ける)。同一直線上でも 1 モジュール以上離れた
+  別々の大引は統合しない。
+- 配置の基準(端部): 統合後の大引 1 連の**実部材端**ではなく、**その端を受けている支持材の芯**
   (土台または他の大引の芯=支持材芯)を端部とする。ホームズ君 IFC の大引は端部が
   支持材芯より半支持材厚だけ内側に納まって描かれており(単モジュール=910mm 区間で
   実長 805mm=910−105)、実部材端を基準にすると床束が実際より内側に寄る。各端で
@@ -53,6 +58,14 @@ _PARALLEL_TOL = 1e-9    # 芯線がほぼ平行な支持材は交点が定まら
 _SEG_TOL = 1.0          # 交点が支持材の区間からこの値だけはみ出しても受けとみなす
 _SHIN_MARGIN = 1.0      # 大引端が支持材の footprint(半支持材厚)+この値以内なら受けとみなす
 
+# 同一直線上の大引の継手(継目)判定の許容値 (mm)
+_COLLINEAR_ANGLE_TOL = 1e-6     # 方向ベクトルの外積(=sin 角)がこれ以下なら平行
+_COLLINEAR_PERP_TOL = 1.0       # 相手端の芯線からの直交距離がこれ以下なら同一直線上
+# 継手のすき間(継目=支持材幅ぶんの間隔)がこれ以下の同一直線上の大引は 1 本に統合。
+# 継手のすき間(支持材幅≈105mm)は半モジュール(455mm)を大きく下回り、別々の大引の
+# 間隔(≥1 モジュール≈1000mm)を大きく下回るため、この値で継手と別材を切り分けられる。
+_JOINT_GAP_TOL = _POST_INTERVAL / 2.0
+
 _IFC_MEMBER_TYPES = ('IfcBeam', 'IfcMember')
 
 # 大引を受ける支持材の種別(土台・他の大引)。
@@ -60,6 +73,9 @@ _SUPPORT_CLASSES = (CLASS_DODAI, CLASS_OOBIKI)
 
 # 支持材 1 本の平面芯線。(始点 x, y, 単位方向 x, y, 芯線長, 幅)。
 _SupportLine = tuple[float, float, float, float, float, float]
+
+# 大引 1 本(または継手で統合した 1 連)の平面芯線。(始点 x, y, 終点 x, y)。
+_OhbikiRun = tuple[float, float, float, float]
 
 
 def _post_offsets(length: float) -> list[float]:
@@ -141,45 +157,124 @@ def _shin_reference(
     return best_point
 
 
+def _collect_ohbiki_lines(ifc_file: ifcopenshell.file) -> list[_OhbikiRun]:
+    """大引(``CLASS_OOBIKI``)の平面芯線を集める(始点・終点、グリッド中心オフセット前)。"""
+    lines: list[_OhbikiRun] = []
+    for member_type in _IFC_MEMBER_TYPES:
+        for element in ifc_file.by_type(member_type):
+            if member_class_from_name(element.Name) != CLASS_OOBIKI:
+                continue
+            placement = _get_placement_3d(element)
+            dims = _get_profile_dims(element)
+            if placement is None or dims is None:
+                continue
+            ox, oy, _oz, ax, ay, _az = placement
+            _width, _height, length = dims
+            ex, ey = ox + ax * length, oy + ay * length
+            if math.hypot(ex - ox, ey - oy) <= 0.0:
+                continue
+            lines.append((ox, oy, ex, ey))
+    return lines
+
+
+def _collinear_gap(a: _OhbikiRun, b: _OhbikiRun) -> float | None:
+    """大引 a・b が同一直線上にあるとき、区間のすき間(重なり/接触は 0)を返す。
+
+    (1) 方向が平行、(2) b の端点が a の芯線上(直交距離 ≈ 0)、を満たすとき、a 方向に
+    射影した b の区間と a の区間 [0, la] のすき間を返す(重なる/接触するなら 0)。
+    平行でない/別の直線上にある(直交距離が大きい)場合は None。
+    """
+    ax1, ay1, ax2, ay2 = a
+    bx1, by1, bx2, by2 = b
+    dax, day = ax2 - ax1, ay2 - ay1
+    la = math.hypot(dax, day)
+    dbx, dby = bx2 - bx1, by2 - by1
+    lb = math.hypot(dbx, dby)
+    if la <= 0.0 or lb <= 0.0:
+        return None
+    ux, uy = dax / la, day / la
+    if abs(ux * (dby / lb) - uy * (dbx / lb)) > _COLLINEAR_ANGLE_TOL:
+        return None
+    if abs(ux * (by1 - ay1) - uy * (bx1 - ax1)) > _COLLINEAR_PERP_TOL:
+        return None
+    tb1 = ux * (bx1 - ax1) + uy * (by1 - ay1)
+    tb2 = ux * (bx2 - ax1) + uy * (by2 - ay1)
+    b_lo, b_hi = min(tb1, tb2), max(tb1, tb2)
+    if b_lo > la:
+        return b_lo - la
+    if b_hi < 0.0:
+        return -b_hi
+    return 0.0
+
+
+def _merge_collinear_ohbiki(lines: list[_OhbikiRun]) -> list[_OhbikiRun]:
+    """同一直線上で継手(すき間 ≤ ``_JOINT_GAP_TOL``)の大引を 1 連に統合する。
+
+    ホームズ君 IFC の大引は継手(支持材の上での継目)で分断されているが、継手は
+    実際の大引の端ではないため、床束の間隔計算では 1 本と考える(要件)。Union-Find で
+    同一直線上・すき間許容内の大引を連結成分にまとめ、各成分を先頭の芯線方向へ全端点を
+    射影した最小〜最大区間の 1 本にする。統合は入力順に依存しない(代表は最小インデックス、
+    出力は代表インデックス昇順)。
+    """
+    n = len(lines)
+    parent = list(range(n))
+
+    def find(a: int) -> int:
+        while parent[a] != a:
+            parent[a] = parent[parent[a]]
+            a = parent[a]
+        return a
+
+    for i in range(n):
+        for j in range(i + 1, n):
+            gap = _collinear_gap(lines[i], lines[j])
+            if gap is not None and gap <= _JOINT_GAP_TOL:
+                ri, rj = find(i), find(j)
+                if ri != rj:
+                    parent[max(ri, rj)] = min(ri, rj)
+
+    components: dict[int, list[int]] = {}
+    for i in range(n):
+        components.setdefault(find(i), []).append(i)
+
+    runs: list[_OhbikiRun] = []
+    for root in sorted(components):
+        members = [lines[i] for i in components[root]]
+        if len(members) == 1:
+            runs.append(members[0])
+            continue
+        ax1, ay1, ax2, ay2 = members[0]
+        la = math.hypot(ax2 - ax1, ay2 - ay1)
+        ux, uy = (ax2 - ax1) / la, (ay2 - ay1) / la
+        ts = [ux * (px - ax1) + uy * (py - ay1)
+              for run in members for px, py in ((run[0], run[1]), (run[2], run[3]))]
+        t_lo, t_hi = min(ts), max(ts)
+        runs.append((ax1 + ux * t_lo, ay1 + uy * t_lo, ax1 + ux * t_hi, ay1 + uy * t_hi))
+    return runs
+
+
 def build_floor_post_commands(
     ifc_file: ifcopenshell.file,
 ) -> list[FloorPostCommand]:
     """大引の下に床束(ハイブリッドシンボル)を配置する floor_post 命令を組み立てる。
 
     IFC に床束が無いため、大引(``CLASS_OOBIKI``)の下に 910mm 間隔で床束を並べる。
-    間隔の基準(端部)は大引の実部材端ではなく、その端を受けている支持材(土台・
-    他の大引)の芯とする(``_shin_reference``)。座標は通り芯・横架材と同じグリッド
-    中心オフセットで補正する。高さの基準(基礎底盤上端)は配置先レイヤ ``F-床束`` の
-    ストーリレベルが担うため命令には高さ情報を持たせない。基礎が無いモデルでは
-    空リストを返す。
+    同一直線上で継手により分断された大引は 1 連に統合してから配置を計算する
+    (``_merge_collinear_ohbiki``。継手は実際の大引の端ではないため)。間隔の基準(端部)は
+    大引の実部材端ではなく、その端を受けている支持材(土台・他の大引)の芯とする
+    (``_shin_reference``)。座標は通り芯・横架材と同じグリッド中心オフセットで補正する。
+    高さの基準(基礎底盤上端)は配置先レイヤ ``F-床束`` のストーリレベルが担うため命令には
+    高さ情報を持たせない。基礎が無いモデルでは空リストを返す。
     """
     if not has_foundation(ifc_file):
         return []
 
     _, center_x, center_y = resolve_lines(ifc_file)
     support_lines = _collect_support_lines(ifc_file)
-
-    elements: list[ifcopenshell.entity_instance] = []
-    for member_type in _IFC_MEMBER_TYPES:
-        elements += ifc_file.by_type(member_type)
+    runs = _merge_collinear_ohbiki(_collect_ohbiki_lines(ifc_file))
 
     commands: list[FloorPostCommand] = []
-    for element in elements:
-        if member_class_from_name(element.Name) != CLASS_OOBIKI:
-            continue
-        placement = _get_placement_3d(element)
-        if placement is None:
-            continue
-        dims = _get_profile_dims(element)
-        if dims is None:
-            continue
-
-        ox, oy, _oz, ax, ay, _az = placement
-        _width, _height, length = dims
-
-        # 実部材の平面芯線(始点・終点)。傾斜大引でも平面投影の芯線に沿って並べる。
-        sx, sy = ox, oy
-        ex, ey = ox + ax * length, oy + ay * length
+    for sx, sy, ex, ey in runs:
         seg = math.hypot(ex - sx, ey - sy)
         if seg <= 0.0:
             continue
