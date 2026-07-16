@@ -99,7 +99,9 @@ class TestMergeCollinear:
         # 同一直線上・105mm すき間(継手)
         a = (0.0, 0.0, 1000.0, 0.0)
         b = (1105.0, 0.0, 2000.0, 0.0)
-        assert abs(floor_post._collinear_gap(a, b) - 105.0) < 1e-6
+        gap = floor_post._collinear_gap(a, b)
+        assert gap is not None
+        assert abs(gap - 105.0) < 1e-6
 
     def test_gap_zero_when_touching(self) -> None:
         a = (0.0, 0.0, 1000.0, 0.0)
