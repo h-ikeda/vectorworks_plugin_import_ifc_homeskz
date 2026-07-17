@@ -77,7 +77,14 @@ jobs:
         run: mypy
 
       - name: Run tests with coverage
-        run: pytest tests/ -v --cov=src/vectorworks_plugin_import_ifc_homeskz --cov-report=xml
+        # pytest-xdist でテストをコア数ぶんのワーカーに分散して並列実行する
+        # (-n auto)。--dist loadscope は同一モジュール/クラスのテストを同じ
+        # ワーカーに固めるため、フィクスチャ IFC の解析キャッシュ (conftest の
+        # load_fixture_ifc / 各ワーカー内で共有) の再利用が最大化される。
+        # pytest-cov はワーカー間のカバレッジを自動で結合する。
+        run: >-
+          pytest tests/ -n auto --dist loadscope
+          --cov=src/vectorworks_plugin_import_ifc_homeskz --cov-report=xml
 
       - name: Upload coverage to Codecov
         # カバレッジは matrix のうち 1 バージョン分のみアップロードする

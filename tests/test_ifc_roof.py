@@ -6,20 +6,19 @@
 from __future__ import annotations
 
 import math
-import os
 
 import ifcopenshell
 
-from vectorworks_plugin_import_ifc_homeskz.ifc import open_ifc, roof
+from vectorworks_plugin_import_ifc_homeskz.ifc import roof
 from vectorworks_plugin_import_ifc_homeskz.ifc.structural_class import (
     CLASS_ROOF_SHEATHING,
 )
 
-FIXTURES_DIR = os.path.join(os.path.dirname(__file__), 'fixtures')
+from tests.conftest import load_fixture_ifc
 
 
 def _open(filename: str) -> ifcopenshell.file:
-    return open_ifc(os.path.join(FIXTURES_DIR, filename))
+    return load_fixture_ifc(filename)
 
 
 class TestRoofCommandForPlane:

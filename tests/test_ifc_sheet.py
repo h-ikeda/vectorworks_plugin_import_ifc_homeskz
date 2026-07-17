@@ -5,18 +5,16 @@
 """
 from __future__ import annotations
 
-import os
-
 import ifcopenshell
 
 from vectorworks_plugin_import_ifc_homeskz.document import AnchorBoltCommand
-from vectorworks_plugin_import_ifc_homeskz.ifc import open_ifc, sheet
+from vectorworks_plugin_import_ifc_homeskz.ifc import sheet
 
-FIXTURES_DIR = os.path.join(os.path.dirname(__file__), 'fixtures')
+from tests.conftest import load_fixture_ifc
 
 
 def _open(filename: str) -> ifcopenshell.file:
-    return open_ifc(os.path.join(FIXTURES_DIR, filename))
+    return load_fixture_ifc(filename)
 
 
 class TestBuildFoundationSheetCommands:

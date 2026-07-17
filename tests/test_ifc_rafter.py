@@ -6,7 +6,6 @@
 from __future__ import annotations
 
 import math
-import os
 from typing import cast
 
 import ifcopenshell
@@ -16,14 +15,14 @@ from vectorworks_plugin_import_ifc_homeskz.document import (
     MemberCommand,
     StoryBoundCommand,
 )
-from vectorworks_plugin_import_ifc_homeskz.ifc import open_ifc, rafter
+from vectorworks_plugin_import_ifc_homeskz.ifc import rafter
 from vectorworks_plugin_import_ifc_homeskz.ifc.structural_class import CLASS_TARUKI
 
-FIXTURES_DIR = os.path.join(os.path.dirname(__file__), 'fixtures')
+from tests.conftest import load_fixture_ifc
 
 
 def _open(filename: str) -> ifcopenshell.file:
-    return open_ifc(os.path.join(FIXTURES_DIR, filename))
+    return load_fixture_ifc(filename)
 
 
 def _girder(start: list[float], end: list[float], width: float) -> MemberCommand:

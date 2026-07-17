@@ -6,12 +6,10 @@
 from __future__ import annotations
 
 import math
-import os
 
 from vectorworks_plugin_import_ifc_homeskz.ifc import rebar
-from vectorworks_plugin_import_ifc_homeskz.ifc.loader import open_ifc
 
-FIXTURES_DIR = os.path.join(os.path.dirname(__file__), 'fixtures')
+from tests.conftest import load_fixture_ifc
 
 
 class TestStripGrade:
@@ -121,7 +119,7 @@ class TestBeamGeometry:
 
 class TestBuildRebarCommands:
     def _document(self) -> list[rebar.RebarCommand]:
-        ifc = open_ifc(os.path.join(FIXTURES_DIR, 'サンプル1 (住木邸新築工事).ifc'))
+        ifc = load_fixture_ifc('サンプル1 (住木邸新築工事).ifc')
         return rebar.build_rebar_commands(ifc)
 
     def test_produces_beam_and_slab_commands(self) -> None:
