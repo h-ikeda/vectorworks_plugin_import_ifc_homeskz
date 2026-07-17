@@ -77,19 +77,19 @@ class TestBuildFloorFramingSheetCommands:
         assert first['title'] == '1階床伏図'
         assert first['viewport']['drawing_title'] == '1階床伏図'
         assert first['viewport']['drawing_number'] == '2'
-        # 横架材・柱・アンカーボルト・床・通り芯の順
+        # 横架材・柱 span(切断 1.25 を含む 1to2)・アンカーボルト・床・通り芯の順
         assert first['viewport']['layers'] == [
-            '1-横架材天端', '1-柱', 'F-アンカーボルト', '1-FL', '共通']
+            '1-横架材天端', '1to2-柱', 'F-アンカーボルト', '1-FL', '共通']
 
     def test_middle_floor_shows_beam_column_slab_grid(self) -> None:
         ifc = _open('伏図次郎【2階】.ifc')
         middle = sheet.build_floor_framing_sheet_commands(ifc)[1]
         # 下屋根の母屋は専用の母屋伏図に分けるため、この階には母屋を重ねない
         assert middle['title'] == '2階床伏図'
-        # 中間階はアンカーボルトを含まない(横架材・柱・下階柱・直下階の柱(1-柱)・床・
-        # 通り芯)。通し柱を表示するため直下の 1 階の柱レイヤのみ重ねる。
+        # 切断 2.25 を含む span=2 階起点の柱(2to3=2階管柱・2to2.5=下屋束の断面)・床・
+        # 通り芯。下から届く通し柱があれば併せて出る。アンカーボルトは含まない。
         assert middle['viewport']['layers'] == [
-            '2-横架材天端', '2-柱', '2-下階柱', '1-柱', '2-FL', '共通']
+            '2-横架材天端', '2to2.5-柱', '2to3-柱', '2-FL', '共通']
 
     def test_roof_shows_beam_column_directly_below_grid(self) -> None:
         ifc = _open('伏図次郎【2階】.ifc')
@@ -97,10 +97,10 @@ class TestBuildFloorFramingSheetCommands:
         # 最上階は主屋根の階番号(2階小屋)を付ける。下屋根の母屋は専用の母屋伏図に
         # 分けるため小屋伏図には重ねない。
         assert roof['title'] == '2階小屋伏図'
-        # 軒高の横架材・柱(束)・下階柱・直下階の柱(2-柱)・通り芯(床は無い)。通し柱を
-        # 表示するため直下階(2階)の柱レイヤのみ重ね、それより下(1-柱)は重ねない。
+        # 軒高の横架材・切断 3.25 を含む span(3to3.5=主屋根束の断面)・通り芯。
+        # 下屋束(2to2.5、to=2.5)は切断 3.25 を含まないため写り込まない(解消)。
         assert roof['viewport']['layers'] == [
-            'R-軒高', 'R-柱', 'R-下階柱', '2-柱', '共通']
+            'R-軒高', '3to3.5-柱', '共通']
 
 
 class TestBuildMoyaSheetCommands:
@@ -117,14 +117,14 @@ class TestBuildMoyaSheetCommands:
         sheets = sheet.build_moya_sheet_commands(ifc)
         assert [s['title'] for s in sheets] == ['1階母屋伏図', '2階母屋伏図']
         assert [s['number'] for s in sheets] == ['5', '6']
-        # 下屋根(2階)の母屋伏図: 母屋・垂木・野地板・小屋束記号・通り芯
+        # 下屋根(2階)の母屋伏図: 母屋・垂木・野地板・通り芯(小屋束の伏図記号は後回し)
         assert sheets[0]['viewport']['drawing_title'] == '1階母屋伏図'
         assert sheets[0]['viewport']['drawing_number'] == '5'
         assert sheets[0]['viewport']['layers'] == [
-            '2-母屋', '2-垂木', '2-野地板', '2-小屋束', '共通']
+            '2-母屋', '2-垂木', '2-野地板', '共通']
         # 主屋根(屋根)の母屋伏図
         assert sheets[1]['viewport']['layers'] == [
-            'R-母屋', 'R-垂木', 'R-野地板', 'R-小屋束', '共通']
+            'R-母屋', 'R-垂木', 'R-野地板', '共通']
 
     def test_roof_only_shed_dormer_has_no_moya_layer(self) -> None:
         # 母屋の無い下屋根(片流れ等)の母屋伏図は母屋レイヤを含まず、垂木・野地板・
@@ -134,7 +134,7 @@ class TestBuildMoyaSheetCommands:
         # 2階の下屋根(母屋なし)と屋根の主屋根の 2 枚
         assert [s['title'] for s in sheets] == ['1階母屋伏図', '2階母屋伏図']
         assert sheets[0]['viewport']['layers'] == [
-            '2-垂木', '2-野地板', '2-小屋束', '共通']
+            '2-垂木', '2-野地板', '共通']
 
 
 def _anchor_bolt(symbol: str) -> AnchorBoltCommand:

@@ -26,7 +26,11 @@ from unittest.mock import MagicMock, patch
 import ifcopenshell
 import pytest
 
-from vectorworks_plugin_import_ifc_homeskz.document import Document, validate_document
+from vectorworks_plugin_import_ifc_homeskz.document import (
+    Document,
+    LevelCommand,
+    validate_document,
+)
 from vectorworks_plugin_import_ifc_homeskz.ifc import build_document
 
 from tests.conftest import FIXTURES_DIR, load_fixture_ifc
@@ -113,7 +117,7 @@ FIXTURES = [
         floor_posts=41,
         fire_braces=66,
         sheets=6,
-        column_marks=7,
+        column_marks=5,
         rafters=110,
         roofs=7,
         rebars=76,
@@ -136,7 +140,7 @@ FIXTURES = [
         floor_posts=25,
         fire_braces=35,
         sheets=6,
-        column_marks=7,
+        column_marks=4,
         rafters=54,
         roofs=3,
         roof_stories={'2階'},
@@ -158,7 +162,7 @@ FIXTURES = [
         floor_posts=98,
         fire_braces=28,
         sheets=6,
-        column_marks=7,
+        column_marks=4,
         rafters=143,
         roofs=11,
         rebars=75,
@@ -181,7 +185,7 @@ FIXTURES = [
         floor_posts=44,
         fire_braces=28,
         sheets=8,
-        column_marks=10,
+        column_marks=6,
         rafters=106,
         roofs=9,
         rebars=55,
@@ -204,7 +208,7 @@ FIXTURES = [
         floor_posts=20,
         fire_braces=2,
         sheets=6,
-        column_marks=8,
+        column_marks=4,
         rafters=54,
         roofs=2,
         rebars=43,
@@ -377,35 +381,38 @@ class TestSampleIfcAnalysis:
             '基礎天端', 'GL', '床束', '底盤天端']
         assert [lv['layer'] for lv in foundation['levels']] == [
             'F-アンカーボルト', 'F-立上り', 'F-床束', 'F-底盤']
-        # 最上階は常に「屋根」、構造レベルは「軒高」＋柱配置用の柱＋下階柱記号の下階柱
-        # ＋小屋束記号の小屋束＋母屋(棟木含む)配置用の母屋。柱レベルはレイヤを軒高の
-        # 直上に積むため先頭、下階柱・小屋束・母屋は軒高の直上に積む(母屋が軒高の直前、
-        # 小屋束が母屋の直前)。
-        # 最上階は柱＋下階柱＋小屋束記号＋野地板＋垂木＋母屋＋軒高。垂木は母屋の直上、
-        # 野地板は垂木の直上、小屋束記号は野地板の直上に積む
-        # (上→下: 柱, 下階柱, 小屋束, 野地板, 垂木, 母屋, 軒高)。
+        # 柱・小屋束は span(``{from}to{to}-柱``)ごとのレイヤに配置し、各ストーリの
+        # levels 先頭(スタック最上段)に積む。span レベルは type=レイヤ名で内容が
+        # フィクスチャ依存なので、ここでは span 以外の構造レベルの並びを検証する
+        # (span レベルは必ず先頭に来ることも確認する)。下階柱・小屋束(伏図記号)レベルは
+        # span 方式で廃止した。
+        def structural_types(levels: list[LevelCommand]) -> list[str]:
+            return [lv['type'] for lv in levels if not lv['layer'].endswith('-柱')]
+
+        def span_is_prefix(levels: list[LevelCommand]) -> bool:
+            spans = [i for i, lv in enumerate(levels) if lv['layer'].endswith('-柱')]
+            return spans == list(range(len(spans)))
+
+        # 最上階(屋根): span... ＋ 野地板・垂木・母屋・軒高(この順)。
         roof = stories[-1]
         assert roof['name'] == '屋根'
-        assert [lv['type'] for lv in roof['levels']] == [
-            '柱', '下階柱', '小屋束', '野地板', '垂木', '母屋', '軒高']
-        # 最下階(1階=stories[1])は下に柱が無いため下階柱レベルを持たない
-        assert [lv['type'] for lv in stories[1]['levels']] == [
-            '柱', 'FL', '横架材天端']
-        # 中間階は FL + 横架材天端 ＋柱＋下階柱(横架材天端の直上)。下屋根の母屋を
-        # 含む階は母屋レベルを、屋根版(下屋根)を含む階は垂木・野地板・小屋束記号
-        # レベルを持つ(いずれも横架材天端の直上・垂木が母屋の直上・野地板が垂木の直上・
-        # 小屋束記号が野地板の直上。上→下: 柱, FL, 下階柱, 小屋束, 野地板, 垂木, 母屋,
-        # 横架材天端)。下屋根は母屋が無くても屋根版=垂木・野地板・小屋束記号を持つ。
+        assert span_is_prefix(roof['levels'])
+        assert structural_types(roof['levels']) == ['野地板', '垂木', '母屋', '軒高']
+        # 最下階(1階=stories[1]): span... ＋ FL・横架材天端。
+        assert span_is_prefix(stories[1]['levels'])
+        assert structural_types(stories[1]['levels']) == ['FL', '横架材天端']
+        # 中間階: span... ＋ FL ＋(屋根版があれば 野地板・垂木)＋(母屋があれば 母屋)
+        # ＋ 横架材天端(いずれも横架材天端の直上)。
         for story in stories[2:-1]:
-            expected_types = ['柱', 'FL', '下階柱']
+            assert span_is_prefix(story['levels'])
+            expected_types = ['FL']
             if story['name'] in exp.roof_stories:
-                expected_types.append('小屋束')
                 expected_types.append('野地板')
                 expected_types.append('垂木')
             if story['name'] in exp.moya_stories:
                 expected_types.append('母屋')
             expected_types.append('横架材天端')
-            assert [lv['type'] for lv in story['levels']] == expected_types
+            assert structural_types(story['levels']) == expected_types
 
     def test_grid_and_member_counts_match_expected(self, exp: Expected) -> None:
         document = build_fixture_document(exp.filename)
@@ -480,9 +487,9 @@ class TestSampleIfcAnalysis:
             f'{i}階母屋伏図' for i in moya_indices]
         assert [s['number'] for s in moya_sheets] == [
             str(2 + n + k) for k in range(len(moya_indices))]
-        # 最上階(主屋根)の母屋伏図は母屋・垂木・野地板・小屋束記号・通り芯。
+        # 最上階(主屋根)の母屋伏図は母屋・垂木・野地板・通り芯(小屋束の伏図記号は後回し)。
         assert moya_sheets[-1]['viewport']['layers'] == [
-            'R-母屋', 'R-垂木', 'R-野地板', 'R-小屋束', '共通']
+            'R-母屋', 'R-垂木', 'R-野地板', '共通']
         # 各伏図の表示レイヤは 通り芯 と 各階のストーリレイヤ(横架材・柱・床・母屋・
         # 垂木・野地板・小屋束・下階柱)、および最下階のアンカーボルトのみ。
         allowed = story_layers | {'共通'}
