@@ -216,7 +216,7 @@ class TestStoryHasRoof:
 
 class TestBuildStoryCommands:
     def test_shed_dormer_without_moya_gets_taruki_but_no_moya(self) -> None:
-        """母屋の無い下屋根(屋根版のみ)の階は垂木レベルだけを持つ。"""
+        """母屋の無い下屋根(屋根版のみ)の階は垂木・野地板・小屋束記号を持つが母屋は持たない。"""
         ifc = ifcopenshell.file()
         make_storey(ifc, '1FL', 473.0, [('IfcColumn', -48.0)])
         second = make_storey(ifc, '2FL', 3273.0, [('IfcSlab', -36.0)])
@@ -225,11 +225,11 @@ class TestBuildStoryCommands:
 
         commands = build_story_commands(ifc)
 
-        # 2 階は屋根版を持つが母屋を持たないため、垂木レベルのみ(母屋レベルなし)。
-        # 垂木は横架材天端の直上に積む。
+        # 2 階は屋根版を持つが母屋を持たないため、垂木・野地板・小屋束記号レベルのみ
+        # (母屋レベルなし)。垂木・野地板・小屋束記号は横架材天端の直上に積む。
         assert commands[1]['name'] == '2階'
         assert [lv['type'] for lv in commands[1]['levels']] == [
-            '柱', 'FL', '下階柱', '野地板', '垂木', '横架材天端']
+            '柱', 'FL', '下階柱', '小屋束', '野地板', '垂木', '横架材天端']
 
     def test_intermediate_story_with_moya_gets_moya_level(self) -> None:
         """下屋根の母屋を含む中間階には 母屋 レベルが横架材天端の直上に入る。"""

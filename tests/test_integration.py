@@ -85,13 +85,13 @@ class Expected:
         # 基礎伏図のグラフィック凡例数(基礎があれば 1)。
         self.legends = legends
         # 下屋根の小屋組(母屋・棟木)を含む中間階のストーリ名の集合。
-        # 該当階は 母屋 レベル(n-母屋 レイヤ)を持ち、床伏図に母屋を重ねて
-        # 表示し、タイトルが {n}階床・{n-1}階母屋伏図 になる。
+        # 該当階は 母屋 レベル(n-母屋 レイヤ)を持ち、専用の母屋伏図に母屋を表示する。
         self.moya_stories = moya_stories or set()
         # 屋根版(屋根面)を含む中間階(下屋根)のストーリ名の集合。該当階は
-        # 垂木 レベル(n-垂木 レイヤ)を持つ。下屋根は母屋が無くても屋根版=垂木を
-        # 持つため moya_stories とは別に管理する(母屋の無い下屋根は
-        # moya_stories に含まれず roof_stories にのみ含まれる)。
+        # 垂木・野地板・小屋束記号レベル(n-垂木/n-野地板/n-小屋束 レイヤ)を持ち、
+        # 専用の母屋伏図を 1 枚持つ。下屋根は母屋が無くても屋根版=垂木を持つため
+        # moya_stories とは別に管理する(母屋の無い下屋根は moya_stories に含まれず
+        # roof_stories にのみ含まれる)。
         self.roof_stories = roof_stories or set()
 
 
@@ -112,8 +112,8 @@ FIXTURES = [
         anchor_bolts=96,
         floor_posts=41,
         fire_braces=66,
-        sheets=5,
-        column_marks=8,
+        sheets=6,
+        column_marks=9,
         rafters=110,
         roofs=7,
         rebars=76,
@@ -135,8 +135,8 @@ FIXTURES = [
         anchor_bolts=110,
         floor_posts=25,
         fire_braces=35,
-        sheets=5,
-        column_marks=8,
+        sheets=6,
+        column_marks=9,
         rafters=54,
         roofs=3,
         roof_stories={'2階'},
@@ -157,8 +157,8 @@ FIXTURES = [
         anchor_bolts=85,
         floor_posts=98,
         fire_braces=28,
-        sheets=5,
-        column_marks=8,
+        sheets=6,
+        column_marks=9,
         rafters=143,
         roofs=11,
         rebars=75,
@@ -180,8 +180,8 @@ FIXTURES = [
         anchor_bolts=60,
         floor_posts=44,
         fire_braces=28,
-        sheets=6,
-        column_marks=11,
+        sheets=8,
+        column_marks=13,
         rafters=106,
         roofs=9,
         rebars=55,
@@ -392,13 +392,14 @@ class TestSampleIfcAnalysis:
         assert [lv['type'] for lv in stories[1]['levels']] == [
             '柱', 'FL', '横架材天端']
         # 中間階は FL + 横架材天端 ＋柱＋下階柱(横架材天端の直上)。下屋根の母屋を
-        # 含む階は母屋レベルを、屋根版(下屋根)を含む階は垂木・野地板レベルを持つ
-        # (いずれも横架材天端の直上・垂木が母屋の直上・野地板が垂木の直上。上→下:
-        # 柱, FL, 下階柱, 野地板, 垂木, 母屋, 横架材天端)。下屋根は母屋が無くても
-        # 屋根版=垂木・野地板を持つ。
+        # 含む階は母屋レベルを、屋根版(下屋根)を含む階は垂木・野地板・小屋束記号
+        # レベルを持つ(いずれも横架材天端の直上・垂木が母屋の直上・野地板が垂木の直上・
+        # 小屋束記号が野地板の直上。上→下: 柱, FL, 下階柱, 小屋束, 野地板, 垂木, 母屋,
+        # 横架材天端)。下屋根は母屋が無くても屋根版=垂木・野地板・小屋束記号を持つ。
         for story in stories[2:-1]:
             expected_types = ['柱', 'FL', '下階柱']
             if story['name'] in exp.roof_stories:
+                expected_types.append('小屋束')
                 expected_types.append('野地板')
                 expected_types.append('垂木')
             if story['name'] in exp.moya_stories:
@@ -441,47 +442,51 @@ class TestSampleIfcAnalysis:
 
     def test_floor_framing_sheets_follow_foundation(
             self, exp: Expected) -> None:
-        """基礎伏図に続けて各階の柱梁伏図が並び、最後に母屋伏図が来る。"""
+        """基礎伏図に続けて各階の柱梁伏図が並び、最後に屋根版を持つ階ごとの母屋伏図。"""
         document = build_fixture_document(exp.filename)
         story_layers = {
             level['layer']
             for story in document['stories']
             for level in story['levels']
         }
-        # 基礎伏図(先頭)と母屋伏図(末尾)を除いた中間が各階の柱梁伏図。
-        # フロア数 = FL ストーリ数(= 基礎を除く)。
-        floor_sheets = document['sheets'][1:-1]
-        moya_sheet = document['sheets'][-1]
+        # フロア数 = FL ストーリ数(= 基礎を除く)。基礎伏図(先頭・番号 1)に続けて
+        # 各階の柱梁伏図(番号 2〜)、その後に屋根版を持つ階ごとの母屋伏図が並ぶ。
         floor_story_count = len(exp.story_names) - 1
-        assert len(floor_sheets) == floor_story_count
-        # タイトルは 1階床伏図・2階床伏図・…、最上階は主屋根の階番号を付けた
-        # {n-1}階小屋伏図。直下階が下屋根の母屋を含む階は、その母屋を 1 つ上の
-        # この階の伏図に載せるため …・{直下階}階母屋伏図 になる(直下階の名前判定
-        # {i}階 が moya_stories に含まれるか)。
         n = floor_story_count
-        expected_titles = []
-        for i in range(n):
-            is_top = i == n - 1
-            has_moya_below = i >= 1 and f'{i}階' in exp.moya_stories
-            base = f'{n - 1}階小屋' if is_top else f'{i + 1}階床'
-            if has_moya_below:
-                expected_titles.append(f'{base}・{i - 1}階母屋伏図')
-            else:
-                expected_titles.append(f'{base}伏図')
+        floor_sheets = document['sheets'][1:1 + n]
+        moya_sheets = document['sheets'][1 + n:]
+        assert len(floor_sheets) == n
+        # タイトルは 1階床伏図・2階床伏図・…、最上階は主屋根の階番号を付けた
+        # {n-1}階小屋伏図。下屋根の母屋は専用の母屋伏図に分けるため母屋の表記は付かない。
+        expected_titles = [
+            f'{n - 1}階小屋伏図' if i == n - 1 else f'{i + 1}階床伏図'
+            for i in range(n)
+        ]
         assert [s['title'] for s in floor_sheets] == expected_titles
         # シートレイヤ番号は基礎伏図(1)に続けて 2 から連番
         assert [s['number'] for s in floor_sheets] == [
-            str(2 + i) for i in range(floor_story_count)]
-        # 母屋伏図は最後で、番号は柱梁伏図に続く。タイトルは主屋根の階番号付き。
-        # 表示レイヤは母屋・垂木・野地板・小屋束記号・通り芯。
-        assert moya_sheet['title'] == f'{floor_story_count - 1}階母屋伏図'
-        assert moya_sheet['number'] == str(2 + floor_story_count)
-        assert moya_sheet['viewport']['layers'] == [
+            str(2 + i) for i in range(n)]
+        # 母屋伏図は屋根版を持つ階ごとに 1 枚(最上階の主屋根+中間階の下屋根)。
+        # story index(0 起点)= exp の階番号: roof_stories(中間階の下屋根)と最上階。
+        # story_names[1:] は FL ストーリ(1階・2階・…・屋根)なので、index i の階名は
+        # story_names[1 + i]。屋根版を持つ階は roof_stories(中間階)または最上階。
+        fl_story_names = exp.story_names[1:]  # 基礎を除く
+        moya_indices = [
+            i for i in range(n)
+            if i == n - 1 or fl_story_names[i] in exp.roof_stories
+        ]
+        # タイトルは {index}階母屋伏図、番号は柱梁伏図(1..1+n)に続く連番。
+        assert [s['title'] for s in moya_sheets] == [
+            f'{i}階母屋伏図' for i in moya_indices]
+        assert [s['number'] for s in moya_sheets] == [
+            str(2 + n + k) for k in range(len(moya_indices))]
+        # 最上階(主屋根)の母屋伏図は母屋・垂木・野地板・小屋束記号・通り芯。
+        assert moya_sheets[-1]['viewport']['layers'] == [
             'R-母屋', 'R-垂木', 'R-野地板', 'R-小屋束', '共通']
-        # 各伏図の表示レイヤは 通り芯 と 各階のストーリレイヤ(横架材・柱・床・母屋)、
-        # および最下階のアンカーボルトのみ。
+        # 各伏図の表示レイヤは 通り芯 と 各階のストーリレイヤ(横架材・柱・床・母屋・
+        # 垂木・野地板・小屋束・下階柱)、および最下階のアンカーボルトのみ。
         allowed = story_layers | {'共通'}
-        for s in floor_sheets + [moya_sheet]:
+        for s in floor_sheets + moya_sheets:
             for layer in s['viewport']['layers']:
                 assert layer in allowed, \
                     f"未知のレイヤを参照しています: {layer}"

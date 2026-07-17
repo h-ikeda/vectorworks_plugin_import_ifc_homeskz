@@ -20,24 +20,21 @@
   最下階から ``1階床伏図``・``2階床伏図``・…、最上階は主屋根が架かる階番号を付けた
   ``{階数}階小屋伏図``(例 2 階建てなら ``2階小屋伏図``)。表示レイヤは
   各階の横架材(``n-横架材天端``、最上階は ``n-軒高``)・柱(``n-柱``)・通り芯(``共通``)。
-  加えて**それより下の全階の柱レイヤ**(3階床伏図なら ``1-柱``・``2-柱``)も表示する
-  (通し柱は起点となる下階の柱レイヤに描かれ当階の柱レイヤには現れないため、下階の
-  柱を重ねないと通し柱が当階に無いように映る)。一般階(最上階以外)は床(``n-FL``)も
-  表示し、最下階には基礎がある場合に
-  アンカーボルト(``F-アンカーボルト``)も表示する。**直下階が下屋根の小屋組(母屋・
-  棟木)を含む**場合、その母屋レイヤ(直下階の ``n-母屋``)を重ねて表示し、母屋が
-  直下階の屋根に当たるためタイトルを ``{n}階床・{n-2}階母屋伏図``(最上階は
-  ``{階数}階小屋・{n-2}階母屋伏図``)にする。下屋根の母屋は直下階の伏図では梁と
-  重なるため、1 つ上の階の伏図に載せる(表示する伏図を 1 階分上げる)。直下階が
-  下屋根の屋根版を含む場合は、その垂木(``n-垂木``)・野地板(``n-野地板``)も同様に
-  1 つ上の階の伏図に重ねて表示する。
-- **母屋伏図**(``build_moya_sheet_commands``): 最上階(屋根)の母屋・棟木・垂木を
-  梁と分けて表示する 1 枚。シートレイヤ番号は柱梁伏図の最後(小屋伏図)に
-  続けて振る。タイトルは主屋根が架かる階番号を付けた ``{階数}階母屋伏図``。表示
-  レイヤは母屋(``R-母屋``)・垂木(``R-垂木``)・小屋束記号(``R-小屋束``)・通り芯
-  (``共通``)。母屋を支える小屋束の位置を小屋束記号(柱束伏図記号 PIO)で示す。
-  中間階の下屋根の母屋・垂木は専用シートにせず、1 つ上の階の柱梁伏図に重ねて表示する
-  (上記)。
+  加えて**直下階の柱レイヤ**(``{n-1}-柱``)も表示する(通し柱は起点となる直下階の柱
+  レイヤに描かれ当階の柱レイヤには現れないため。ただし直下階のみ重ね、それより下の階の
+  柱は重ねない=上下階で位置のずれた管柱が当階に誤って現れるのを防ぐ)。一般階
+  (最上階以外)は床(``n-FL``)も表示し、最下階には基礎がある場合にアンカーボルト
+  (``F-アンカーボルト``)も表示する。下屋根(下屋)の小屋組(母屋・垂木・野地板)は
+  この柱梁伏図には重ねず、専用の母屋伏図に分けて表示する(下記)。
+- **母屋伏図**(``build_moya_sheet_commands``): **屋根版(屋根面)を持つ階ごとに 1 枚**、
+  その階の小屋組(母屋・垂木・野地板)を梁組と分けて表示する。最上階(屋根)の主屋根
+  だけでなく、中間階に架かる下屋根(下屋)にも 1 枚ずつ作る(複雑な下屋根で母屋等の
+  小屋組と梁組が重なって見にくくなるのを防ぐ)。シートレイヤ番号は各階の柱梁伏図の
+  最後に続けて Elevation 昇順に振る。タイトルは屋根が架かる階番号を付けた
+  ``{index}階母屋伏図``(例 2 階建てなら主屋根=``2階母屋伏図``、下屋根=``1階母屋伏図``)。
+  表示レイヤは母屋(``n-母屋``、母屋がある階のみ)・垂木(``n-垂木``)・野地板
+  (``n-野地板``)・小屋束記号(``n-小屋束``)・通り芯(``共通``)。母屋を支える小屋束の
+  位置を小屋束記号(柱束伏図記号 PIO)で示す。
 
 さらに ``build_legend_commands`` は基礎伏図に **グラフィック凡例**(VW 標準の
 「グラフィック凡例」PIO)を配置する legend 命令を組み立てる。基礎伏図ビューポートに
@@ -119,9 +116,9 @@ FLOOR_PLAN_ROOF_LABEL = '小屋'
 # 柱梁伏図のシートレイヤ番号の開始値。基礎伏図(番号 1)に続けて 2 から振る。
 FLOOR_PLAN_START_NUMBER = 2
 
-# 母屋伏図シートの構成。母屋・棟木(と将来の垂木)を梁と分けて表示する 1 枚。
-# 柱梁伏図の最後(小屋伏図)に続けてシートレイヤ番号を振る。タイトルは主屋根が
-# 架かる階番号を付けた "{階数}階母屋伏図"。床伏図に重ねる下屋根の母屋ラベルにも使う。
+# 母屋伏図シートの構成。屋根版を持つ階(最上階の主屋根・中間階の下屋根)ごとに、
+# 小屋組(母屋・垂木・野地板)を梁組と分けて表示する。柱梁伏図の最後に続けて
+# シートレイヤ番号を振る。タイトルは屋根が架かる階番号を付けた "{index}階母屋伏図"。
 MOYA_PLAN_LABEL = '母屋'
 
 
@@ -149,24 +146,29 @@ def build_foundation_sheet_commands(
     }]
 
 
-def floor_plan_title(
-    index: int, is_top: bool, count: int, has_moya_below: bool = False,
-) -> str:
+def floor_plan_title(index: int, is_top: bool, count: int) -> str:
     """柱梁伏図シートのタイトルを返す。
 
     最上階は主屋根が架かる階番号を付けた ``{count-1}階小屋伏図``、それ以外は
-    ``{index+1}階床伏図`` を基本とする。**直下階(``index-1`` 階)が下屋根の小屋組
-    (母屋・棟木)を含む**場合(``has_moya_below``)、その母屋を 1 つ上のこの階の
-    伏図に重ねて表示するためタイトルを ``…・{index-1}階母屋伏図`` とする(下屋根の
-    母屋は直下階の屋根に当たり、直下階の伏図では梁と重なるため 1 階分上げる)。
+    ``{index+1}階床伏図``。下屋根(下屋)の小屋組(母屋・垂木・野地板)は柱梁伏図には
+    重ねず専用の母屋伏図(``build_moya_sheet_commands``)に分けるため、柱梁伏図の
+    タイトルに母屋の表記は付けない。
     """
     if is_top:
-        base = f'{count - 1}階{FLOOR_PLAN_ROOF_LABEL}'
-    else:
-        base = f'{index + 1}階{FLOOR_PLAN_FLOOR_LABEL}'
-    if has_moya_below:
-        return f'{base}・{index - 1}階{MOYA_PLAN_LABEL}伏図'
-    return f'{base}伏図'
+        return f'{count - 1}階{FLOOR_PLAN_ROOF_LABEL}伏図'
+    return f'{index + 1}階{FLOOR_PLAN_FLOOR_LABEL}伏図'
+
+
+def moya_plan_title(index: int) -> str:
+    """母屋伏図シートのタイトルを返す。
+
+    屋根版を持つ階(``index``、0 起点)ごとに 1 枚。タイトルはその屋根が架かる階番号
+    (0 起点 index をそのまま用いる)を付けた ``{index}階母屋伏図``。最上階(主屋根)は
+    ``index = count - 1`` なので ``{count-1}階母屋伏図``(例 2 階建て=``2階母屋伏図``)、
+    中間階の下屋根はその下屋が架かる階番号を付ける(例 story index 1 の下屋根=
+    ``1階母屋伏図``)。
+    """
+    return f'{index}階{MOYA_PLAN_LABEL}伏図'
 
 
 def build_floor_framing_sheet_commands(
@@ -175,63 +177,41 @@ def build_floor_framing_sheet_commands(
     """各階の柱梁伏図シートの sheet 命令を組み立てて返す。
 
     ストーリ 1 つにつき伏図 1 枚。表示レイヤは横架材・柱・通り芯を基本とし、
-    **それより下の全階の柱レイヤ**(3階床伏図なら ``1-柱``・``2-柱``)も加える(通し柱を
-    表示するため)。最上階以外は床(FL)を加える。最下階には基礎がある場合に
-    アンカーボルトも加える。最下階以外は直下階の柱を記号化する下階柱記号レイヤ
-    (``n-下階柱``)も加える。
-    **直下階が下屋根の小屋組(母屋・棟木)を含む**場合、その母屋レイヤ(直下階の
-    ``n-母屋``)を重ねて表示する(下屋根の母屋は直下階の伏図では梁と重なるため
-    1 つ上のこの階の伏図に載せる)。直下階が下屋根の屋根版を含む場合は、その
-    垂木(``n-垂木``)・野地板(``n-野地板``)も同様に重ねて表示する。ストーリが
-    無ければ空リストを返す。
+    **直下階(``i-1``)の柱レイヤ**(``{i-1}-柱``)も加える。通し柱は起点となる直下階の
+    柱レイヤに立ち上がって描かれる(当階の柱レイヤには現れない)ため、直下階の柱を
+    重ねないと通し柱が「当階に柱が無い」ように映ってしまう。ただし**直下階の柱のみ**を
+    重ね、それより下の階の柱は重ねない(上下階で位置のずれた管柱が当階の伏図に誤って
+    現れるのを防ぐ。直下階の柱は基本的に当階の梁下に隠れる)。最上階以外は床(FL)を、
+    最下階には基礎がある場合にアンカーボルトを加える。最下階以外は直下階の柱を記号化
+    する下階柱記号レイヤ(``n-下階柱``)も加える。
+
+    下屋根(下屋)の小屋組(母屋・垂木・野地板)は柱梁伏図には重ねず、専用の母屋伏図
+    (``build_moya_sheet_commands``)に分けて表示する(母屋等の小屋組と梁組が重なって
+    見にくくなるのを防ぐ)。ストーリが無ければ空リストを返す。
     """
     stories = collect_stories(ifc_file)
     foundation = has_foundation(ifc_file)
-    moya_flags = collect_story_moya_flags(ifc_file)
-    roof_flags = collect_story_roof_flags(ifc_file)
     commands: list[SheetCommand] = []
     n = len(stories)
     for i in range(n):
         is_top = i == n - 1
         prefix = layer_prefix_for(i, is_top)
-        # 直下階(i-1)が下屋根(下屋)を持つ場合、その小屋組(母屋・棟木)・垂木は
-        # 専用レイヤ((i-1)-母屋 / (i-1)-垂木)に分離され、直下階の屋根に当たる。直下階の
-        # 伏図では梁と重なるため、1 つ上のこの階の伏図に重ねて表示する(表示する伏図を
-        # 1 階分上げる)。下屋根は母屋を持たなくても屋根版=垂木があるため、垂木の重ね
-        # 表示は屋根版の有無(roof_flags)で、母屋の重ね表示は母屋の有無(moya_flags)で
-        # それぞれ判定する。
-        has_moya_below = i >= 1 and moya_flags[i - 1]
-        has_roof_below = i >= 1 and roof_flags[i - 1]
         # 横架材レイヤは一般階=横架材天端、最上階=軒高。
         beam_level = LEVEL_EAVES if is_top else LEVEL_BEAM_TOP
         layers = [f'{prefix}-{beam_level}', f'{prefix}-{LEVEL_COLUMN}']
-        # 最下階(i=0)以外は直下階の柱を記号化する下階柱記号レイヤを表示する。
+        # 最下階(i=0)以外は直下階の柱を記号化する下階柱記号レイヤと、通し柱を表示
+        # するための直下階(i-1)の柱レイヤを重ねる(それより下の階の柱は重ねない)。
+        # 直下階は最上階になり得ないため layer_prefix_for(i-1, False)。
         if i >= 1:
             layers.append(f'{prefix}-{LEVEL_UNDER_COLUMN}')
-        # それより下の全階の柱レイヤ(3階床伏図なら 1-柱・2-柱)も表示する。通し柱は
-        # 起点となる下階の柱レイヤに立ち上がって描かれる(当階の柱レイヤには現れない)
-        # ため、下階の柱レイヤを重ねないと通し柱が「当階に柱が無い」ように映ってしまう。
-        # j<i の階はいずれも最上階ではないため layer_prefix_for(j, False)。
-        for j in range(i):
-            layers.append(f'{layer_prefix_for(j, False)}-{LEVEL_COLUMN}')
-        # 直下階の下屋根の母屋((i-1)-母屋)・垂木((i-1)-垂木)・野地板((i-1)-野地板)を
-        # この階の伏図に重ねて表示する(下屋根の小屋組は直下階の伏図では梁と重なるため
-        # 1 階分上げる)。母屋は母屋がある場合のみ、垂木・野地板は屋根版がある場合に表示する。
-        if has_roof_below:
-            below_prefix = layer_prefix_for(i - 1, False)
-            if has_moya_below:
-                layers.append(f'{below_prefix}-{LEVEL_MOYA}')
-            layers.append(f'{below_prefix}-{LEVEL_TARUKI}')
-            layers.append(f'{below_prefix}-{LEVEL_NOJIITA}')
+            layers.append(f'{layer_prefix_for(i - 1, False)}-{LEVEL_COLUMN}')
         if not is_top:
             # 最下階には基礎(アンカーボルト)がある場合に表示する。
             if i == 0 and foundation:
                 layers.append(LAYER_FOUNDATION_ANCHOR)
             layers.append(f'{prefix}-{LEVEL_FL}')
         layers.append(TARGET_LAYER)
-        # タイトルの「…母屋伏図」表記は母屋がある場合のみ付ける(垂木だけの下屋根は
-        # 既存のタイトルのまま垂木レイヤを重ねて表示する)。
-        title = floor_plan_title(i, is_top, n, has_moya_below)
+        title = floor_plan_title(i, is_top, n)
         number = str(FLOOR_PLAN_START_NUMBER + i)
         commands.append({
             'number': number,
@@ -250,37 +230,56 @@ def build_moya_sheet_commands(
 ) -> list[SheetCommand]:
     """母屋伏図シートの sheet 命令を組み立てて返す。
 
-    最上階(屋根)の母屋・棟木・垂木を梁と分けて表示する伏図を 1 枚返す。
-    シートレイヤ番号は柱梁伏図の最後(小屋伏図)に続けて振る。タイトルは主屋根が
-    架かる階番号を付けた ``{階数}階母屋伏図``。表示レイヤは母屋(``R-母屋``)・
-    垂木(``R-垂木``)・野地板(``R-野地板``)・小屋束記号(``R-小屋束``)・通り芯
-    (``共通``)。母屋・垂木と同じレベルの野地板も併せて表示する。母屋を支える
-    小屋束の位置を小屋束記号(柱束伏図記号 PIO)で示す。ストーリが無ければ空リストを返す。
+    **屋根版(屋根面)を持つ階ごとに 1 枚**、その階の小屋組(母屋・垂木・野地板)を
+    梁組と分けて表示する伏図を返す(複雑な下屋根では母屋等の小屋組と梁組が重なって
+    見にくくなるため、柱梁伏図とは別のシート・ビューポートに分ける)。最上階(屋根)の
+    主屋根だけでなく、中間階に架かる下屋根(下屋)にも 1 枚ずつ作る。シートレイヤ番号は
+    各階の柱梁伏図の最後に続けて Elevation 昇順(最下階→最上階)に振る。タイトルは
+    ``moya_plan_title``(``{index}階母屋伏図``)。
+
+    表示レイヤは 母屋(``n-母屋``、母屋がある階のみ)・垂木(``n-垂木``)・野地板
+    (``n-野地板``)・小屋束記号(``n-小屋束``)・通り芯(``共通``)。母屋を支える小屋束の
+    位置を小屋束記号(柱束伏図記号 PIO)で示す。下屋根は母屋を持たない(単純な片流れ等)
+    こともあるため、母屋レイヤは母屋がある階(``moya_flags``)にだけ加え、垂木・野地板・
+    小屋束記号は屋根版がある階(``roof_flags``)に加える。ストーリが無ければ空リストを返す。
     """
     stories = collect_stories(ifc_file)
     if not stories:
         return []
-    top_idx = len(stories) - 1
-    prefix = layer_prefix_for(top_idx, True)
-    # 番号: 基礎伏図(1)+各階柱梁伏図(ストーリ数)の次
-    number = str(FLOOR_PLAN_START_NUMBER + len(stories))
-    # タイトル: 主屋根が架かる最上階の階番号(=ストーリ数 - 1)を付ける
-    title = f'{len(stories) - 1}階{MOYA_PLAN_LABEL}伏図'
-    return [{
-        'number': number,
-        'title': title,
-        'viewport': {
-            'drawing_title': title,
-            'drawing_number': number,
-            'layers': [
-                f'{prefix}-{LEVEL_MOYA}',
-                f'{prefix}-{LEVEL_TARUKI}',
-                f'{prefix}-{LEVEL_NOJIITA}',
-                f'{prefix}-{LEVEL_KOYAZUKA_MARK}',
-                TARGET_LAYER,
-            ],
-        },
-    }]
+    moya_flags = collect_story_moya_flags(ifc_file)
+    roof_flags = collect_story_roof_flags(ifc_file)
+    n = len(stories)
+    # 番号の開始値: 基礎伏図(1)+各階柱梁伏図(ストーリ数)の次
+    base_number = FLOOR_PLAN_START_NUMBER + n
+    commands: list[SheetCommand] = []
+    seq = 0
+    for i in range(n):
+        is_top = i == n - 1
+        # 屋根版を持つ階(最上階の主屋根・中間階の下屋根)だけ母屋伏図を作る。
+        if not (is_top or roof_flags[i]):
+            continue
+        prefix = layer_prefix_for(i, is_top)
+        layers: list[str] = []
+        # 母屋は母屋がある階のみ(片流れ下屋等は母屋を持たず垂木・野地板だけ)。
+        if is_top or moya_flags[i]:
+            layers.append(f'{prefix}-{LEVEL_MOYA}')
+        layers.append(f'{prefix}-{LEVEL_TARUKI}')
+        layers.append(f'{prefix}-{LEVEL_NOJIITA}')
+        layers.append(f'{prefix}-{LEVEL_KOYAZUKA_MARK}')
+        layers.append(TARGET_LAYER)
+        title = moya_plan_title(i)
+        number = str(base_number + seq)
+        seq += 1
+        commands.append({
+            'number': number,
+            'title': title,
+            'viewport': {
+                'drawing_title': title,
+                'drawing_number': number,
+                'layers': layers,
+            },
+        })
+    return commands
 
 
 def build_legend_commands(
