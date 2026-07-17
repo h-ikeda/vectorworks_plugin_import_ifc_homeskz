@@ -39,26 +39,6 @@ def make_floor_command(
     }
 
 
-def make_section_command() -> SheetCommand:
-    return {
-        'number': '断面図',
-        'title': '断面図',
-        'viewport': {
-            'drawing_title': '断面図',
-            'drawing_number': '7',
-            'layers': ['共通'],
-            'section': {
-                'line_start': [0.0, -5000.0],
-                'line_end': [0.0, 5000.0],
-                'look_point': [-1000.0, 0.0],
-                'depth': 12000.0,
-                'start_height': -1000.0,
-                'end_height': 9000.0,
-            },
-        },
-    }
-
-
 def make_tag(layer: str = '1-横架材天端', member_index: int = 0) -> TagCommand:
     return {
         'style': '断面寸法',
@@ -69,9 +49,10 @@ def make_tag(layer: str = '1-横架材天端', member_index: int = 0) -> TagComm
     }
 
 
-def make_legend(number: str = '1') -> dict[str, Any]:
+def make_legend(number: str = '1', style: str = '基礎伏図凡例') -> dict[str, Any]:
     return {
         'number': number,
+        'style': style,
         'position': [0.0, 0.0],
         'items': [
             {'symbol': 'アンカーボルト_M12', 'label': '土台用アンカーボルトM12'},
@@ -129,7 +110,6 @@ def _make_vs_mock(
     vs_mock.GetObject.side_effect = get_obj
     vs_mock.CreateLayer.side_effect = create_layer
     vs_mock.CreateVP.return_value = 'VP_HANDLE'
-    vs_mock.CreateSectionViewport.return_value = 'SECTION_VP_HANDLE'
     vs_mock.CreateCustomObject.return_value = 'TAG_HANDLE'
     vs_mock.CreateCustomObjectN.return_value = 'LEGEND_HANDLE'
     # デザインレイヤの縮尺(1:50 相当)
@@ -277,58 +257,6 @@ class TestExecuteSheets:
         vs_mock.UpdateVP.assert_not_called()
 
 
-class TestExecuteSheetsSection:
-    def test_creates_section_viewport(self) -> None:
-        vs_mock = _make_vs_mock(['共通', '1-横架材天端', '1-柱'])
-        vw_sheet = _load(vs_mock)
-
-        count = vw_sheet.execute_sheets([make_section_command()])
-
-        assert count == 1
-        # シートレイヤ "断面図" を作る
-        vs_mock.CreateLayer.assert_called_once_with('断面図', 2)
-        # 断面ビューポートを 切断線・見る点・奥行き・鉛直範囲・シートレイヤで作る
-        # (VW SDK CreateSectionViewport の引数列に一致)
-        vs_mock.CreateSectionViewport.assert_called_once_with(
-            (0.0, -5000.0), (0.0, 5000.0), (-1000.0, 0.0),
-            12000.0, -1000.0, 9000.0, _handle('断面図'))
-        # 平面ビューポート(CreateVP)は使わない
-        vs_mock.CreateVP.assert_not_called()
-        # 図面タイトル・図番を設定する
-        ov = [c.args for c in vs_mock.SetObjectVariableString.call_args_list]
-        assert ('SECTION_VP_HANDLE',
-                vw_sheet._OV_VP_DRAWING_TITLE, '断面図') in ov
-        assert ('SECTION_VP_HANDLE',
-                vw_sheet._OV_VP_DRAWING_NUMBER, '7') in ov
-        vs_mock.UpdateVP.assert_called_with('SECTION_VP_HANDLE')
-
-    def test_section_shows_all_design_layers(self) -> None:
-        layers = ['共通', '1-横架材天端', '1-柱']
-        vs_mock = _make_vs_mock(layers)
-        vw_sheet = _load(vs_mock)
-
-        vw_sheet.execute_sheets([make_section_command()])
-
-        vis = [c.args for c in vs_mock.SetVPLayerVisibility.call_args_list]
-        # 全デザインレイヤを表示(0)にする(断面は建物全体を切るため絞り込まない)
-        for name in layers:
-            assert ('SECTION_VP_HANDLE', _handle(name),
-                    vw_sheet._VP_LAYER_VISIBLE) in vis
-        # どのレイヤも非表示(1)にはしない
-        assert all(v != vw_sheet._VP_LAYER_HIDDEN for _, _, v in vis)
-
-    def test_section_falls_back_to_plan_viewport(self) -> None:
-        # 断面ビューポートを作れない環境では通常のビューポートにフォールバックする
-        vs_mock = _make_vs_mock(['共通'])
-        vs_mock.CreateSectionViewport.return_value = vs_mock.Handle(0)
-        vw_sheet = _load(vs_mock)
-
-        count = vw_sheet.execute_sheets([make_section_command()])
-
-        assert count == 1
-        vs_mock.CreateVP.assert_called_once_with(_handle('断面図'))
-
-
 class TestExecuteSheetsWithTags:
     def test_places_tag_on_matching_floor_viewport(self) -> None:
         vs_mock = _make_vs_mock(['1-横架材天端', '1-柱', '共通'])
@@ -470,6 +398,31 @@ class TestExecuteSheetsWithLegends:
         vs_mock.UpdateStyledObjects.assert_called_once_with(
             vw_sheet._GRAPHIC_LEGEND_STYLE)
         assert counters['legends'] == 1
+
+    def test_uses_command_style_and_updates_each_style_once(self) -> None:
+        # 基礎伏図凡例(基礎伏図)と床伏図凡例(床伏図)を別スタイルで配置し、
+        # 各スタイルにつき UpdateStyledObjects を 1 回ずつ呼ぶ
+        vs_mock = _make_vs_mock(_TARGET_LAYERS)
+        vw_sheet = _load(vs_mock)
+
+        counters: dict[str, int] = {}
+        vw_sheet.execute_sheets(
+            [make_command(), make_floor_command()],
+            legends=[
+                make_legend('1', '基礎伏図凡例'),
+                make_legend('2', '床伏図凡例'),
+            ],
+            counters=counters)
+
+        # 命令の style をそのまま関連付ける(基礎伏図凡例・床伏図凡例)
+        vs_mock.SetPluginStyle.assert_any_call('LEGEND_HANDLE', '基礎伏図凡例')
+        vs_mock.SetPluginStyle.assert_any_call('LEGEND_HANDLE', '床伏図凡例')
+        # 使用した各スタイルにつき 1 回ずつ再計算する
+        styles = {
+            call.args[0] for call in vs_mock.UpdateStyledObjects.call_args_list}
+        assert styles == {'基礎伏図凡例', '床伏図凡例'}
+        assert vs_mock.UpdateStyledObjects.call_count == 2
+        assert counters['legends'] == 2
 
     def test_legend_not_placed_on_non_matching_sheet(self) -> None:
         # シートレイヤ番号が一致しない凡例は載せない
