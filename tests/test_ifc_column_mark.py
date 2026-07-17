@@ -61,9 +61,10 @@ class TestBuildColumnMarkCommands:
 
         commands = build_column_mark_commands(ifc)
 
-        # 最下階 (1階) の下階柱記号は作らない。2階・屋根の各階に管柱(×)と小屋束(○)の
-        # 2 つずつ (計 4 つ)、加えて屋根の小屋束記号 1 つ、さらに各階(1階・2階・屋根)の
-        # 柱レイヤに断面記号 1 つずつ (計 3 つ)
+        # 最下階 (1階) の下階柱記号は作らない。2階・屋根の各階に管柱(×)の下階柱記号を
+        # 1 つずつ (計 2 つ。小屋束は下階柱記号に含めず母屋伏図の小屋束記号が担う)、
+        # 加えて屋根の小屋束記号 1 つ、さらに各階(1階・2階・屋根)の柱レイヤに断面記号
+        # 1 つずつ (計 3 つ)
         assert commands == [
             {
                 'layer': '2-下階柱', 'class': MARK_CLASS, 'target_layer': '1-柱',
@@ -71,18 +72,8 @@ class TestBuildColumnMarkCommands:
                 'style': MARK_STYLE_PLAN, 'position': [0.0, 0.0],
             },
             {
-                'layer': '2-下階柱', 'class': MARK_CLASS, 'target_layer': '1-柱',
-                'target_class': CLASS_KOYAZUKA, 'size': DEFAULT_MARK_SIZE,
-                'style': MARK_STYLE_PLAN, 'position': [0.0, 0.0],
-            },
-            {
                 'layer': 'R-下階柱', 'class': MARK_CLASS, 'target_layer': '2-柱',
                 'target_class': CLASS_KUDABASHIRA, 'size': DEFAULT_MARK_SIZE,
-                'style': MARK_STYLE_PLAN, 'position': [0.0, 0.0],
-            },
-            {
-                'layer': 'R-下階柱', 'class': MARK_CLASS, 'target_layer': '2-柱',
-                'target_class': CLASS_KOYAZUKA, 'size': DEFAULT_MARK_SIZE,
                 'style': MARK_STYLE_PLAN, 'position': [0.0, 0.0],
             },
             {
@@ -117,17 +108,14 @@ class TestBuildColumnMarkCommands:
 
         commands = build_column_mark_commands(ifc)
 
-        # 各下階柱記号は管柱(×)と小屋束(○)の 2 クラスに分かれる。次に屋根の小屋束記号、
-        # 末尾に各階の柱レイヤ自身を対象にする断面記号。
+        # 各下階柱記号は管柱(×)のみ(小屋束は含めず母屋伏図の小屋束記号が担う)。
+        # 次に屋根の小屋束記号、末尾に各階の柱レイヤ自身を対象にする断面記号。
         assert [
             (c['layer'], c['target_layer'], c['target_class']) for c in commands
         ] == [
             ('2-下階柱', '1-柱', CLASS_KUDABASHIRA),
-            ('2-下階柱', '1-柱', CLASS_KOYAZUKA),
             ('3-下階柱', '2-柱', CLASS_KUDABASHIRA),
-            ('3-下階柱', '2-柱', CLASS_KOYAZUKA),
             ('R-下階柱', '3-柱', CLASS_KUDABASHIRA),
-            ('R-下階柱', '3-柱', CLASS_KOYAZUKA),
             ('R-小屋束', 'R-柱', CLASS_KOYAZUKA),
             ('1-柱', '1-柱', ''),
             ('2-柱', '2-柱', ''),
