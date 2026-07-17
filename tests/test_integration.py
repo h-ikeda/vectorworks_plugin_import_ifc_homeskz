@@ -16,6 +16,7 @@ vs に依存するのは描画フェーズだけなので、ここでは test_in
 """
 from __future__ import annotations
 
+import functools
 import importlib
 import json
 import os
@@ -26,9 +27,9 @@ import ifcopenshell
 import pytest
 
 from vectorworks_plugin_import_ifc_homeskz.document import Document, validate_document
-from vectorworks_plugin_import_ifc_homeskz.ifc import build_document, open_ifc
+from vectorworks_plugin_import_ifc_homeskz.ifc import build_document
 
-FIXTURES_DIR = os.path.join(os.path.dirname(__file__), 'fixtures')
+from tests.conftest import FIXTURES_DIR, load_fixture_ifc
 
 
 class Expected:
@@ -219,12 +220,22 @@ def fixture_path(filename: str) -> str:
     return os.path.join(FIXTURES_DIR, filename)
 
 
+@functools.lru_cache(maxsize=None)
+def _cached_document(filename: str) -> Document:
+    """フィクスチャ IFC の解析+命令組み立てをファイルごとに 1 回だけ行いキャッシュする。"""
+    return build_document(load_fixture_ifc(filename))
+
+
 def build_fixture_document(filename: str) -> Document:
-    """フィクスチャ IFC を解析し JSON ラウンドトリップ済みの命令セットを返す。"""
-    ifc = open_ifc(fixture_path(filename))
-    document = build_document(ifc)
-    # run() と同じく JSON を経由させ直列化可能性を保証する
-    return json.loads(json.dumps(document))
+    """フィクスチャ IFC を解析し JSON ラウンドトリップ済みの命令セットを返す。
+
+    解析 (load_fixture_ifc) と命令組み立て (build_document) はファイルごとに 1 回だけ
+    行いキャッシュする。この関数は同一ファイルに対し多数のテストから繰り返し呼ばれる
+    ため、キャッシュにより冗長な再解析・再組み立てを避ける。各呼び出しには JSON
+    ラウンドトリップで独立したコピーを返すため (run() と同じ直列化保証も兼ねる)、
+    テストが返り値を変更してもキャッシュは汚れない。
+    """
+    return json.loads(json.dumps(_cached_document(filename)))
 
 
 def make_vs_mock() -> MagicMock:

@@ -6,14 +6,13 @@
 from __future__ import annotations
 
 import math
-import os
 
 import ifcopenshell
 import ifcopenshell.guid
 
-from vectorworks_plugin_import_ifc_homeskz.ifc import footing, open_ifc
+from vectorworks_plugin_import_ifc_homeskz.ifc import footing
 
-FIXTURES_DIR = os.path.join(os.path.dirname(__file__), 'fixtures')
+from tests.conftest import load_fixture_ifc
 
 
 def _identity_placement() -> footing._Placement:
@@ -93,7 +92,7 @@ class TestAxisPlacementHelpers:
 
 def _open(name: str) -> ifcopenshell.file:
     # サニタイズ付きで開く(古い ifcopenshell でも基礎を取りこぼさないため)
-    return open_ifc(os.path.join(FIXTURES_DIR, name))
+    return load_fixture_ifc(name)
 
 
 class TestBuildFromFixture:

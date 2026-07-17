@@ -5,11 +5,9 @@
 """
 from __future__ import annotations
 
-import os
-
 import ifcopenshell
 
-from vectorworks_plugin_import_ifc_homeskz.ifc import build_floor_commands, open_ifc
+from vectorworks_plugin_import_ifc_homeskz.ifc import build_floor_commands
 from vectorworks_plugin_import_ifc_homeskz.ifc.floor import (
     FLOOR_THICKNESS,
     build_floor_commands as build_floor_commands_direct,
@@ -17,11 +15,11 @@ from vectorworks_plugin_import_ifc_homeskz.ifc.floor import (
 from vectorworks_plugin_import_ifc_homeskz.ifc.story import resolve_beam_top_offset
 from vectorworks_plugin_import_ifc_homeskz.ifc.structural_class import CLASS_FLOOR
 
-FIXTURES_DIR = os.path.join(os.path.dirname(__file__), 'fixtures')
+from tests.conftest import load_fixture_ifc
 
 
 def _open(filename: str) -> ifcopenshell.file:
-    return open_ifc(os.path.join(FIXTURES_DIR, filename))
+    return load_fixture_ifc(filename)
 
 
 class TestBuildFloorCommands:
