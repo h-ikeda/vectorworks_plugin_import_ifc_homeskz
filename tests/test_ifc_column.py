@@ -210,19 +210,23 @@ class TestBuildColumnCommands:
 
         commands = build_column_commands(ifc)
         assert len(commands) == 2
-        assert all(c['layer'] == '1-柱' for c in commands)
+        # 柱は span レイヤ ``{from}to{to}-柱`` に配置する。base(1 階=1 始まりレベル 1)
+        # 起点なので from=1(``1to...``)。
+        assert all(c['layer'].startswith('1to') and c['layer'].endswith('-柱')
+                   for c in commands)
         # 構造材 ID は "{幅}×{成} - {種別}"(金物なし)
         assert all(c['member_id'] == '105×105 - 管柱' for c in commands)
 
     def test_top_story_uses_column_layer(self) -> None:
-        """最上階 (RFL) の柱(小屋束等)は R-柱 レイヤに配置する。"""
+        """最上階の柱(小屋束等)も span レイヤに配置する(base = その階のレベル)。"""
         ifc = ifcopenshell.file()
         storey = make_storey(ifc, 'RFL', 6300.0)
         make_column(ifc, storey, 0.0, 0.0, oz=-100.0)
 
         commands = build_column_commands(ifc)
         assert len(commands) == 1
-        assert commands[0]['layer'] == 'R-柱'
+        # 単一ストーリ=レベル 1(1 始まり)。上に階が無いため屋根束扱いで 1to1.5。
+        assert commands[0]['layer'] == '1to1.5-柱'
         # 下端高さ = ストーリ高さ + ローカル Z
         assert commands[0]['elevation'] == pytest.approx(6200.0)
 
@@ -291,8 +295,10 @@ class TestBuildColumnCommands:
         make_column(ifc, s2, 0.0, 0.0)
 
         layers = [c['layer'] for c in build_column_commands(ifc)]
-        assert '1-柱' in layers
-        assert '2-柱' in layers
+        # 柱は span レイヤに配置する。1 階起点の柱は from=1(``1to...``)、2 階起点は
+        # from=2(``2to...``)。
+        assert any(lyr.startswith('1to') for lyr in layers)
+        assert any(lyr.startswith('2to') for lyr in layers)
 
     def test_elevation_is_story_plus_local_z(self) -> None:
         ifc = ifcopenshell.file()

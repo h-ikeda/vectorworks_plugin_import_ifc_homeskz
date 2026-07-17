@@ -10,7 +10,7 @@ from typing import TYPE_CHECKING
 
 from ..document import DOCUMENT_VERSION, Document
 from .anchor_bolt import build_anchor_bolt_commands
-from .column import build_column_commands
+from .column import build_column_commands, collect_column_layers_by_story
 from .column_mark import build_column_mark_commands
 from .fire_brace import build_fire_brace_commands
 from .floor import build_floor_commands
@@ -55,15 +55,20 @@ def build_document(ifc_file: ifcopenshell.file) -> Document:
     基礎ストーリ(``基礎``)が存在する場合は最下階として stories の先頭に置く
     (Elevation=0 で最下層になり、レイヤのスタック順でも最下段に積まれる)。
     """
-    stories = build_story_commands(ifc_file)
+    # 横架材命令は断面寸法データタグ・柱 span の to レベル判定(上階梁下端)にも
+    # 使うため一度だけ組み立てる
+    members = build_member_commands(ifc_file)
+    # 柱命令は仕口(柱の側面に取り付く梁端部の判定)・span レイヤ生成(story)・伏図の
+    # 表示レイヤ絞り込み(sheet)・断面記号(column_mark)にも使うため一度だけ組み立てる。
+    # span の to レベル判定に上階梁下端が要るため members を渡す。
+    columns = build_column_commands(ifc_file, members)
+    # 柱の span レイヤ(``{from}to{to}-柱``)を base ストーリごとにまとめて story に渡す
+    column_layers_by_story = collect_column_layers_by_story(columns)
+    stories = build_story_commands(ifc_file, column_layers_by_story)
     foundation_story = build_foundation_story_command(ifc_file)
     if foundation_story is not None:
         stories = [foundation_story, *stories]
 
-    # 横架材命令は断面寸法データタグの組み立てにも使うため一度だけ組み立てる
-    members = build_member_commands(ifc_file)
-    # 柱命令は仕口(柱の側面に取り付く梁端部の判定)にも使うため一度だけ組み立てる
-    columns = build_column_commands(ifc_file)
     # 立上り命令は壁結合(交点はインデックス参照)の組み立てにも使うため一度だけ組み立てる
     walls = build_wall_commands(ifc_file)
     # アンカーボルト命令は基礎伏図のグラフィック凡例(載せるシンボルの判定)にも
@@ -91,9 +96,11 @@ def build_document(ifc_file: ifcopenshell.file) -> Document:
         # 一度だけ組み立てた members を渡す。柱の側面に取り付く梁端部も仕口にするため
         # columns も渡す
         'joints': build_joint_commands(members, columns),
-        'sheets': build_sheet_commands(ifc_file),
+        # 伏図は各柱 span レイヤを切断レベルで絞って表示するため columns を渡す
+        'sheets': build_sheet_commands(ifc_file, columns),
         'tags': build_tag_commands(members),
-        'column_marks': build_column_mark_commands(ifc_file),
+        # 断面記号は span 柱レイヤごとに置くため columns を渡す
+        'column_marks': build_column_mark_commands(columns),
         'legends': build_legend_commands(ifc_file, anchor_bolts),
         'rebars': build_rebar_commands(ifc_file),
     }

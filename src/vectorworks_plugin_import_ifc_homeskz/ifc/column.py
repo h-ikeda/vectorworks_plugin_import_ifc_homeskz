@@ -1,7 +1,11 @@
 """柱 (IfcColumn) の解析と column 命令の組み立て。vs 非依存。
 
-IFC の IfcColumn を走査し、各階の柱レイヤ(``n-柱``)に配置する column 命令を
-生成する。柱は梁と同じ構造材ツール (StructuralMember) で鉛直材として描くため、
+IFC の IfcColumn を走査し、span(またぐレベル区間)ごとの専用レイヤ
+(``{from}to{to}-柱``)に配置する column 命令を生成する。span の ``from`` は柱が立つ
+床レベル(1 始まり・GL=0)、``to`` は上端が届く床/母屋レベル(``resolve_column_to_level``。
+管柱=次階の整数、小屋束・屋根束=屋根面で止まる +0.5、通し柱=複数階ぶん上)。各伏図は
+その切断レベルを span が含むレイヤだけを表示するため、下屋の小屋束が上階の小屋伏図に
+写り込まない。柱は梁と同じ構造材ツール (StructuralMember) で鉛直材として描くため、
 断面寸法(幅・成)と柱高さを押し出しソリッドから取得する。構造用途は管柱・
 通し柱は柱、小屋束は小屋束を設定する(小屋束を柱用途にすると VW の柱高さ
 モデルで上端高さが崩れるため)。
@@ -38,16 +42,17 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from ..document import ColumnCommand, StoryBoundCommand
+from ..document import ColumnCommand, MemberCommand, StoryBoundCommand
 from .grid import resolve_lines
-from .member import _get_profile_dims
+from .member import _get_profile_dims, build_member_commands
 from .story import (
     LEVEL_BEAM_TOP,
-    LEVEL_COLUMN,
     LEVEL_EAVES,
     get_local_placement_z,
     layer_prefix_for,
+    parse_span_layer,
     resolve_beam_top_offset,
+    span_layer_name,
 )
 from .structural_class import CLASS_KOYAZUKA, resolve_column_class
 
@@ -73,6 +78,43 @@ def is_through_column(top_abs: float, next_floor_elevation: float | None) -> boo
     if next_floor_elevation is None:
         return False
     return top_abs > next_floor_elevation + THROUGH_COLUMN_TOL
+
+
+# span の to レベル判定の許容値 (mm)。柱上端が上階の横架材下端に達したかの判定に使う。
+SPAN_LEVEL_TOL = 1.0
+
+
+def resolve_column_to_level(
+    base_index: int, top_abs: float, beam_bottoms: list[float],
+) -> float:
+    """柱上端が届く span の ``to`` レベル(1 始まり)を求める。
+
+    ``base_index`` は 0 起点のストーリ番号で、柱の下端はその階の床(span では
+    ``base_index + 1``)にある。上端 ``top_abs`` を base より上の各階の横架材(床梁)の
+    **下端**(``beam_bottoms``)と比べ、達した最上の階を求める:
+
+    - どの上階の横架材にも達しない(＝上端が直上階の梁下端未満) → その階には載らない
+      屋根束扱いで **from + 0.5**(下屋の小屋束・棟束・主屋根の小屋束等)。管柱は必ず
+      直上階の床梁下端に達するのでこの分岐には来ない。
+    - 直上階の床梁下端に達すれば **from + 1**(管柱)。さらに上の階の床梁下端まで
+      達すれば通し柱として到達した階まで伸ばす(1・2 階通し柱なら 3 階床＝from + 2)。
+
+    横架材の天端ではなく**下端**を境界にするのは、通常の管柱が横架材天端ではなく
+    下端まで(＝梁を下から受ける高さ)しか来ないため。天端を境界にすると、ホームズ君の
+    モデルで天端付近まで伸びた管柱を貫き(通し)と誤判定してしまう。
+    """
+    from_level = float(base_index + 1)
+    reached = base_index  # 到達した最上階(0 起点)。初期値は自階=どの上階にも未到達
+    for s in range(base_index + 1, len(beam_bottoms)):
+        if top_abs >= beam_bottoms[s] - SPAN_LEVEL_TOL:
+            reached = s
+        else:
+            break
+    if reached == base_index:
+        # 直上階の横架材にも達しない屋根束(小屋束等)
+        return from_level + 0.5
+    return float(reached + 1)
+
 
 if TYPE_CHECKING:
     import ifcopenshell
@@ -214,15 +256,24 @@ def _get_position_2d(
     return float(coords[0]), float(coords[1])
 
 
-def build_column_commands(ifc_file: ifcopenshell.file) -> list[ColumnCommand]:
+def build_column_commands(
+    ifc_file: ifcopenshell.file,
+    members: list[MemberCommand] | None = None,
+) -> list[ColumnCommand]:
     """IFC の柱から column 命令のリストを組み立てる。
 
-    配置座標は通り芯と同じグリッド中心オフセットで補正する。
-    柱は各階の柱レイヤ(``n-柱``)に配置し、梁と同じ構造材ツールで鉛直材として
-    描く。下端 Z(``elevation``)はストーリ高さ + ローカル配置 Z の絶対値、
-    上端は下端 + 柱高さ(``height``)。上下端高さは横架材天端(最上階は軒高)の
-    ストーリレベルにバインドする(``bottom_bound`` / ``top_bound``。柱は当階と
-    上階、小屋束は当階の横架材天端)。
+    配置座標は通り芯と同じグリッド中心オフセットで補正する。柱は span(またぐ
+    レベル区間)ごとの専用レイヤ ``{from}to{to}-柱`` に配置し、梁と同じ構造材ツールで
+    鉛直材として描く。span の ``from`` は柱が立つ床レベル(1 始まり)、``to`` は上端が
+    届く床/母屋レベル(``resolve_column_to_level``。管柱=次階の整数、小屋束・屋根束=
+    屋根面で止まる +0.5、通し柱=複数階ぶん上)。to レベルの判定には上の各階の横架材
+    (床梁)の下端が要るため ``members`` を渡す(未指定なら内部で組み立てる。母屋は
+    含めず横架材天端/軒高レイヤの梁だけを境界にする)。
+
+    下端 Z(``elevation``)はストーリ高さ + ローカル配置 Z の絶対値、上端は下端 +
+    柱高さ(``height``)。上下端高さは横架材天端(最上階は軒高)のストーリレベルに
+    バインドする(``bottom_bound`` / ``top_bound``。柱は当階と上階、小屋束は当階の
+    横架材天端)。
 
     構造材 ID(``member_id``)は ``{幅}×{成} - {種別}`` に柱頭・柱脚金物の仕様を
     連結した文字列。柱頭・柱脚金物 (IfcMechanicalFastener) は柱と同じ平面座標に
@@ -247,14 +298,25 @@ def build_column_commands(ifc_file: ifcopenshell.file) -> list[ColumnCommand]:
         else elevations[i] + resolve_beam_top_offset(s)
         for i, s in enumerate(storeys)
     ]
+    # 各階の横架材(床梁)下端の最小値。span の to レベル判定の境界に使う
+    # (母屋 n-母屋 は含めず、横架材天端/軒高レイヤの床梁のみ)。梁が無い階は天端で代用。
+    if members is None:
+        members = build_member_commands(ifc_file)
+    beam_bottoms: list[float] = []
+    for i in range(len(storeys)):
+        is_top = i == top_idx
+        beam_layer = f'{layer_prefix_for(i, is_top)}-{LEVEL_EAVES if is_top else LEVEL_BEAM_TOP}'
+        bottoms = [
+            min(m['elevation'], m['end_elevation']) - m['height']
+            for m in members if m['layer'] == beam_layer
+        ]
+        beam_bottoms.append(min(bottoms) if bottoms else beam_top_abs[i])
 
     commands: list[ColumnCommand] = []
 
     for i, storey in enumerate(storeys):
         is_top = (i == top_idx)
         prefix = layer_prefix_for(i, is_top)
-        # 柱は各階の柱レイヤに配置する
-        layer_name = f'{prefix}-{LEVEL_COLUMN}'
 
         storey_elevation = elevations[i]
 
@@ -285,6 +347,10 @@ def build_column_commands(ifc_file: ifcopenshell.file) -> list[ColumnCommand]:
                 local_z = get_local_placement_z(element) or 0.0
                 bottom_abs = storey_elevation + local_z
                 top_abs = bottom_abs + height
+
+                # span(またぐレベル区間)ごとの専用レイヤに配置する。
+                to_level = resolve_column_to_level(i, top_abs, beam_bottoms)
+                layer_name = span_layer_name(i + 1, to_level)
 
                 column_type = resolve_column_type(element.ObjectType)
                 member_id = make_column_member_id(
@@ -351,3 +417,36 @@ def build_column_commands(ifc_file: ifcopenshell.file) -> list[ColumnCommand]:
                 })
 
     return commands
+
+
+def collect_column_spans(
+    columns: list[ColumnCommand],
+) -> list[tuple[float, float, str]]:
+    """column 命令から実在する span 柱レイヤを ``(from, to, layer)`` で列挙する。
+
+    重複を除き ``(from, to)`` 昇順に並べた決定的なリストを返す。伏図(``sheet``)が
+    切断レベルで表示レイヤを絞るのに使う。
+    """
+    seen: dict[str, tuple[float, float]] = {}
+    for command in columns:
+        parsed = parse_span_layer(command['layer'])
+        if parsed is not None:
+            seen[command['layer']] = parsed
+    return sorted(
+        ((frm, to, layer) for layer, (frm, to) in seen.items()),
+        key=lambda item: (item[0], item[1]),
+    )
+
+
+def collect_column_layers_by_story(
+    columns: list[ColumnCommand],
+) -> dict[int, list[str]]:
+    """span 柱レイヤを base ストーリ(0 起点 index = ``from`` - 1)ごとにまとめる。
+
+    各ストーリのレイヤは ``(from, to)`` 昇順。story 命令が各ストーリに span レイヤの
+    レベルを作るのに使う。
+    """
+    result: dict[int, list[str]] = {}
+    for frm, _to, layer in collect_column_spans(columns):
+        result.setdefault(int(frm) - 1, []).append(layer)
+    return result

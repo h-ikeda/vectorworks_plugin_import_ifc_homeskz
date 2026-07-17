@@ -19,13 +19,14 @@
   シートレイヤ番号は基礎伏図(``1``)に続けて ``2`` から順に振る。タイトルは
   最下階から ``1階床伏図``・``2階床伏図``・…、最上階は主屋根が架かる階番号を付けた
   ``{階数}階小屋伏図``(例 2 階建てなら ``2階小屋伏図``)。表示レイヤは
-  各階の横架材(``n-横架材天端``、最上階は ``n-軒高``)・柱(``n-柱``)・通り芯(``共通``)。
-  加えて**直下階の柱レイヤ**(``{n-1}-柱``)も表示する(通し柱は起点となる直下階の柱
-  レイヤに描かれ当階の柱レイヤには現れないため。ただし直下階のみ重ね、それより下の階の
-  柱は重ねない=上下階で位置のずれた管柱が当階に誤って現れるのを防ぐ)。一般階
-  (最上階以外)は床(``n-FL``)も表示し、最下階には基礎がある場合にアンカーボルト
-  (``F-アンカーボルト``)も表示する。下屋根(下屋)の小屋組(母屋・垂木・野地板)は
-  この柱梁伏図には重ねず、専用の母屋伏図に分けて表示する(下記)。
+  各階の横架材(``n-横架材天端``、最上階は ``n-軒高``)・通り芯(``共通``)に加え、
+  **その伏図の切断レベルを span が含む柱レイヤ**(``{from}to{to}-柱``)を表示する。
+  切断レベルはその階の床レベル(1 始まり=index+1)+0.25(``FLOOR_PLAN_CUT_OFFSET``)。
+  これにより、その階を base とする柱の断面と、下から貫いてこの高さに達する通し柱が
+  表示され、下屋の小屋束(to が半整数でその階の床に届かない)は上階の小屋伏図に写り
+  込まない。一般階(最上階以外)は床(``n-FL``)も表示し、最下階には基礎がある場合に
+  アンカーボルト(``F-アンカーボルト``)も表示する。下屋根(下屋)の小屋組
+  (母屋・垂木・野地板)はこの柱梁伏図には重ねず、専用の母屋伏図に分けて表示する(下記)。
 - **母屋伏図**(``build_moya_sheet_commands``): **屋根版(屋根面)を持つ階ごとに 1 枚**、
   その階の小屋組(母屋・垂木・野地板)を梁組と分けて表示する。最上階(屋根)の主屋根
   だけでなく、中間階に架かる下屋根(下屋)にも 1 枚ずつ作る(複雑な下屋根で母屋等の
@@ -33,8 +34,9 @@
   最後に続けて Elevation 昇順に振る。タイトルは屋根が架かる階番号を付けた
   ``{index}階母屋伏図``(例 2 階建てなら主屋根=``2階母屋伏図``、下屋根=``1階母屋伏図``)。
   表示レイヤは母屋(``n-母屋``、母屋がある階のみ)・垂木(``n-垂木``)・野地板
-  (``n-野地板``)・小屋束記号(``n-小屋束``)・通り芯(``共通``)。母屋を支える小屋束の
-  位置を小屋束記号(柱束伏図記号 PIO)で示す。
+  (``n-野地板``)・通り芯(``共通``)。母屋伏図は母屋の上からの見下げ図なので小屋束の
+  断面は出ず、母屋を支える小屋束の位置は平面の伏図記号で示す(小屋束伏図記号は span
+  方式への移行後に別途対応するため、現状は表示レイヤに小屋束記号レイヤを含めない)。
 
 さらに ``build_legend_commands`` は基礎伏図に **グラフィック凡例**(VW 標準の
 「グラフィック凡例」PIO)を配置する legend 命令を組み立てる。基礎伏図ビューポートに
@@ -48,11 +50,13 @@ from typing import TYPE_CHECKING
 
 from ..document import (
     AnchorBoltCommand,
+    ColumnCommand,
     LegendCommand,
     LegendItemCommand,
     SheetCommand,
 )
 from .anchor_bolt import SYMBOL_M12, SYMBOL_M16
+from .column import collect_column_spans
 from .footing import has_foundation
 from .grid import TARGET_LAYER
 from .rebar import CLASS_REBAR
@@ -62,19 +66,23 @@ from .story import (
     LAYER_FOUNDATION_SLAB,
     LAYER_FOUNDATION_WALL,
     LEVEL_BEAM_TOP,
-    LEVEL_COLUMN,
     LEVEL_EAVES,
     LEVEL_FL,
-    LEVEL_KOYAZUKA_MARK,
     LEVEL_MOYA,
     LEVEL_NOJIITA,
     LEVEL_TARUKI,
-    LEVEL_UNDER_COLUMN,
     collect_stories,
     collect_story_moya_flags,
     collect_story_roof_flags,
     layer_prefix_for,
 )
+
+# 柱梁伏図(床伏図・小屋伏図)の切断レベル。各階の床レベル(1 始まり=ストーリ index+1)
+# より 0.25 だけ上をサンプルし、その階を base(from)とする柱の断面と、下から貫いて
+# この高さに達する柱(通し柱)を表示する。span [from, to] がこの切断レベルを含む
+# (from ≤ 切断 ≤ to)柱レイヤだけを載せることで、下屋の小屋束(例 ``2to2.5``、to=2.5)が
+# 上階の小屋伏図(切断 3.25)に写り込まなくなる。
+FLOOR_PLAN_CUT_OFFSET = 1.25
 
 if TYPE_CHECKING:
     import ifcopenshell
@@ -171,26 +179,42 @@ def moya_plan_title(index: int) -> str:
     return f'{index}階{MOYA_PLAN_LABEL}伏図'
 
 
+def _span_layers_at_cut(
+    spans: list[tuple[float, float, str]], cut: float,
+) -> list[str]:
+    """span ``(from, to, layer)`` のうち切断レベル ``cut`` を含む(from ≤ cut ≤ to)
+    レイヤ名を ``(from, to)`` 昇順で返す。"""
+    return [
+        layer for frm, to, layer in spans
+        if frm <= cut <= to
+    ]
+
+
 def build_floor_framing_sheet_commands(
     ifc_file: ifcopenshell.file,
+    columns: list[ColumnCommand] | None = None,
 ) -> list[SheetCommand]:
     """各階の柱梁伏図シートの sheet 命令を組み立てて返す。
 
-    ストーリ 1 つにつき伏図 1 枚。表示レイヤは横架材・柱・通り芯を基本とし、
-    **直下階(``i-1``)の柱レイヤ**(``{i-1}-柱``)も加える。通し柱は起点となる直下階の
-    柱レイヤに立ち上がって描かれる(当階の柱レイヤには現れない)ため、直下階の柱を
-    重ねないと通し柱が「当階に柱が無い」ように映ってしまう。ただし**直下階の柱のみ**を
-    重ね、それより下の階の柱は重ねない(上下階で位置のずれた管柱が当階の伏図に誤って
-    現れるのを防ぐ。直下階の柱は基本的に当階の梁下に隠れる)。最上階以外は床(FL)を、
-    最下階には基礎がある場合にアンカーボルトを加える。最下階以外は直下階の柱を記号化
-    する下階柱記号レイヤ(``n-下階柱``)も加える。
+    ストーリ 1 つにつき伏図 1 枚。表示レイヤは横架材(``n-横架材天端``/最上階
+    ``n-軒高``)・通り芯を基本とし、**その伏図の切断レベルを span が含む柱レイヤ**
+    (``{from}to{to}-柱``)を載せる。切断レベルは ``FLOOR_PLAN_CUT_OFFSET`` により
+    その階の床レベル(1 始まり=index+1)+0.25。これにより、その階を base とする柱の
+    断面と、下から貫いてこの高さに達する通し柱が表示され、下屋の小屋束(to が半整数で
+    その階の床に届かない)は上階の小屋伏図に写り込まない。最上階以外は床(FL)を、
+    最下階には基礎がある場合にアンカーボルトを加える。
 
     下屋根(下屋)の小屋組(母屋・垂木・野地板)は柱梁伏図には重ねず、専用の母屋伏図
     (``build_moya_sheet_commands``)に分けて表示する(母屋等の小屋組と梁組が重なって
-    見にくくなるのを防ぐ)。ストーリが無ければ空リストを返す。
+    見にくくなるのを防ぐ)。ストーリが無ければ空リストを返す。柱の span レイヤを切断
+    レベルで絞るため column 命令(``columns``)を渡す(未指定なら内部で組み立てる)。
     """
     stories = collect_stories(ifc_file)
     foundation = has_foundation(ifc_file)
+    if columns is None:
+        from .column import build_column_commands
+        columns = build_column_commands(ifc_file)
+    spans = collect_column_spans(columns)
     commands: list[SheetCommand] = []
     n = len(stories)
     for i in range(n):
@@ -198,13 +222,10 @@ def build_floor_framing_sheet_commands(
         prefix = layer_prefix_for(i, is_top)
         # 横架材レイヤは一般階=横架材天端、最上階=軒高。
         beam_level = LEVEL_EAVES if is_top else LEVEL_BEAM_TOP
-        layers = [f'{prefix}-{beam_level}', f'{prefix}-{LEVEL_COLUMN}']
-        # 最下階(i=0)以外は直下階の柱を記号化する下階柱記号レイヤと、通し柱を表示
-        # するための直下階(i-1)の柱レイヤを重ねる(それより下の階の柱は重ねない)。
-        # 直下階は最上階になり得ないため layer_prefix_for(i-1, False)。
-        if i >= 1:
-            layers.append(f'{prefix}-{LEVEL_UNDER_COLUMN}')
-            layers.append(f'{layer_prefix_for(i - 1, False)}-{LEVEL_COLUMN}')
+        layers = [f'{prefix}-{beam_level}']
+        # この伏図の切断レベル(その階の床レベル + 0.25)を span が含む柱レイヤを載せる。
+        cut = i + FLOOR_PLAN_CUT_OFFSET
+        layers.extend(_span_layers_at_cut(spans, cut))
         if not is_top:
             # 最下階には基礎(アンカーボルト)がある場合に表示する。
             if i == 0 and foundation:
@@ -265,7 +286,6 @@ def build_moya_sheet_commands(
             layers.append(f'{prefix}-{LEVEL_MOYA}')
         layers.append(f'{prefix}-{LEVEL_TARUKI}')
         layers.append(f'{prefix}-{LEVEL_NOJIITA}')
-        layers.append(f'{prefix}-{LEVEL_KOYAZUKA_MARK}')
         layers.append(TARGET_LAYER)
         title = moya_plan_title(i)
         number = str(base_number + seq)
@@ -312,14 +332,18 @@ def build_legend_commands(
     }]
 
 
-def build_sheet_commands(ifc_file: ifcopenshell.file) -> list[SheetCommand]:
+def build_sheet_commands(
+    ifc_file: ifcopenshell.file,
+    columns: list[ColumnCommand] | None = None,
+) -> list[SheetCommand]:
     """sheet 命令のリストを組み立てて返す。
 
     基礎伏図(基礎がある場合のみ)に続けて、各階の柱梁伏図、最後に母屋伏図を
-    組み立てる。
+    組み立てる。柱梁伏図は柱の span レイヤを切断レベルで絞るため columns を渡す
+    (未指定なら内部で組み立てる)。
     """
     return [
         *build_foundation_sheet_commands(ifc_file),
-        *build_floor_framing_sheet_commands(ifc_file),
+        *build_floor_framing_sheet_commands(ifc_file, columns),
         *build_moya_sheet_commands(ifc_file),
     ]
