@@ -301,6 +301,12 @@ class TestExecuteSlabsWithModifiers:
         move_calls = [c.args for c in vs_mock.Move3D.call_args_list]
         assert (760.0, 5520.0, -240.0) in move_calls
         assert (760.0, 5520.0, -240.0 - 50.0) not in move_calls
+        # 断面天端(v=140)を底盤天端(elevation=50)の直下=絶対 49 まで引き上げて底盤へ
+        # 貫入させる(v=50-1-(-240)=289)。重なりが無いと ModifySlab の add が失敗する。
+        line_calls = [c.args for c in vs_mock.LineTo.call_args_list]
+        assert (-290.0, 289.0) in line_calls        # 天端頂点を引き上げ(重なり確保)
+        assert (0.0, 289.0) in line_calls
+        assert (-290.0, 140.0) not in line_calls     # 元の面接触(重なり無し)は残さない
         # スラブとして天端・バインド・スタイル対象は従来どおり
         vs_mock.SetSlabHeight.assert_called_once_with(slab, 50.0)
 

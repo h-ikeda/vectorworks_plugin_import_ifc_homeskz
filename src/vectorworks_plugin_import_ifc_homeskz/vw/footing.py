@@ -90,9 +90,40 @@ _MODIFIER_AZIMUTH_OFFSET_DEG = 90.0
 # する(add/clip・componentFlags の最終挙動は他要素と同じく VectorWorks 上で確認する)。
 _MODIFIER_IS_CLIP = False
 _MODIFIER_COMPONENT_FLAGS = -1
+# **噛み合わせ(add)には底盤への重なりが必要**。``ModifySlab`` は modifier が slab に
+# 重なっていないと「選択が間違っています」で失敗し(足せず)、モディファイアが別図形の
+# まま残る。地中梁(下り梁)の天端は IFC では底盤下端に一致=**面で接するだけで重なりが
+# 無い**ため、断面の天端頂点を底盤天端の直下(底盤天端 - ``_MODIFIER_SLAB_INSET``)まで
+# 引き上げて底盤を貫かせ、噛み合わせが起きるようにする。天端は底盤天端より内側に留めて
+# 底盤上面から突き出さない(_MODIFIER_SLAB_INSET だけ下に置く)。重なり量は他要素と
+# 同じく VectorWorks 上で最終調整する方針。
+_MODIFIER_SLAB_INSET = 1.0
+# 断面の天端頂点(最大 v)を同一の天端とみなす許容値 (mm)。
+_MODIFIER_TOP_MATCH_TOL = 1.0
 
 
-def _draw_modifier(modifier: Any) -> Any:
+def _penetrate_profile_top(
+    profile: list[Any], oz: float, slab_top: float,
+) -> list[list[float]]:
+    """モディファイア断面の天端頂点を底盤天端の直下まで引き上げて重なりを作る。
+
+    ``profile`` は u=幅・v=鉛直の 2D 頂点列で、v=0 が梁下端(絶対 Z=``oz``)、
+    最大 v が梁天端。梁天端の絶対 Z(``oz + max_v``)は IFC では底盤下端に一致し、
+    ``ModifySlab`` の add には重なりが足りない(面で接するだけ)。天端頂点(最大 v の
+    頂点)を **底盤天端の直下**(絶対 Z=``slab_top - _MODIFIER_SLAB_INSET``、
+    v=``slab_top - _MODIFIER_SLAB_INSET - oz``)まで引き上げて底盤を貫かせる
+    (底盤天端より内側なので上面から突き出さない)。既に天端が十分高い(引き上げると
+    かえって縮む)場合はそのまま返す。
+    """
+    max_v = max(v for _u, v in profile)
+    target_v = slab_top - _MODIFIER_SLAB_INSET - oz
+    if target_v <= max_v:
+        return [[u, v] for u, v in profile]
+    return [[u, target_v if abs(v - max_v) <= _MODIFIER_TOP_MATCH_TOL else v]
+            for u, v in profile]
+
+
+def _draw_modifier(modifier: Any, slab_top: float) -> Any:
     """地中梁モディファイア 1 件を台形プリズム(押し出しソリッド)として描き、
     そのソリッドのハンドルを返す。
 
@@ -104,9 +135,14 @@ def _draw_modifier(modifier: Any) -> Any:
     以前は ``SetSlabHeight`` が外形ポリゴンとモディファイアを一体で持ち上げる前提で
     ``elevation`` を引いていたが、実際にはモディファイアは持ち上がらず、地中梁が
     ``elevation``(=底盤天端の絶対 Z)ぶんだけ低く描画されていた(本修正)。
+
+    さらに、``ModifySlab`` の add は modifier が底盤に重なっていないと「選択が
+    間違っています」で失敗する。地中梁天端は IFC では底盤下端に一致(面で接するだけで
+    重なりが無い)ため、``_penetrate_profile_top`` で断面天端を底盤天端(``slab_top``)の
+    直下まで引き上げて底盤を貫かせ、噛み合わせが起きるようにする。
     """
-    profile = modifier['profile']
     ox, oy, oz = modifier['origin']
+    profile = _penetrate_profile_top(modifier['profile'], oz, slab_top)
     vs.BeginXtrd(0.0, modifier['depth'])
     vs.ClosePoly()
     vs.BeginPoly()
@@ -122,17 +158,18 @@ def _draw_modifier(modifier: Any) -> Any:
     return vs.LNewObj()
 
 
-def _apply_modifiers(slab: Any, modifiers: list[Any]) -> None:
+def _apply_modifiers(slab: Any, modifiers: list[Any], slab_top: float) -> None:
     """地中梁モディファイア群を底盤スラブに ``ModifySlab`` で足す(噛み合わせる)。
 
-    各台形プリズムを絶対位置に描いて(``_draw_modifier``)、
+    各台形プリズムを絶対位置に描いて(``_draw_modifier``。天端は底盤天端
+    ``slab_top`` の直下まで引き上げて底盤に貫入させる)、
     ``ModifySlab(slab, solid, isClipObject=False, componentFlags)`` で底盤に足す。
     ``isClipObject=True`` にすると削り取る(clip)ため、噛み合わせるには
     ``_MODIFIER_IS_CLIP``=False を渡す。底盤は ``SetSlabHeight`` で既に天端の絶対 Z に
     配置済みのため、絶対 Z に描いたモディファイアがそのまま正しい高さで噛み合う。
     """
     for modifier in modifiers:
-        solid = _draw_modifier(modifier)
+        solid = _draw_modifier(modifier, slab_top)
         vs.ModifySlab(
             slab, solid, _MODIFIER_IS_CLIP, _MODIFIER_COMPONENT_FLAGS)
 
@@ -357,7 +394,9 @@ def draw_slab(
         if modifiers:
             # 底盤を SetSlabHeight で天端の絶対 Z に配置してから、絶対 Z のモディファイア
             # (台形プリズム群)を ModifySlab(isClipObject=False=足す)で噛み合わせる。
-            _apply_modifiers(slab, modifiers)
+            # 天端は底盤天端(elevation)の直下まで引き上げて底盤へ貫入させ、add が
+            # 成立する(重なりが無いと「選択が間違っています」で足せず別図形が残る)。
+            _apply_modifiers(slab, modifiers, command['elevation'])
         vs.ResetObject(slab)
     else:
         # フォールバック: 外形ポリゴン
