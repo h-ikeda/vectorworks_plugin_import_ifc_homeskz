@@ -101,6 +101,7 @@ def make_sloped_beam(
     length: float = 1000.0, height: float = 120.0, width: float = 90.0,
     shear: float = 30.0, name: str | None = None, npts: int = 4,
     elem_axis: tuple[float, float, float] | None = None,
+    transpose: bool = False, rotate: int = 0,
 ) -> ifcopenshell.entity_instance:
     """登り梁(傾斜梁)を模した IfcBeam を生成して storey に追加する。
 
@@ -121,6 +122,10 @@ def make_sloped_beam(
                  (筋かい等、``_sloped_member_geometry`` が対象外にする)。
     elem_axis  : 要素ローカル配置の Axis(押し出し方向)。鉛直(火打)を模す場合に
                  ``(0, 0, 1)`` を渡すと横架材から除外される。
+    transpose  : プロファイルの (u, v) を入れ替える(長さ軸をプロファイル第 2 座標に
+                 する)。長さ軸判定の別枝(せい=第 1 座標の span)を検証するため。
+    rotate     : プロファイル頂点列を先頭から ``rotate`` 個ずらす(端辺が先頭に来る
+                 頂点順を作り、中心軸端の選択の別枝を検証するため)。
     """
     c, s = math.cos(theta), math.sin(theta)
     pt = ifc.create_entity(
@@ -134,11 +139,16 @@ def make_sloped_beam(
 
     hh = height / 2.0
     if npts == 4:
-        coords = [(0.0, -hh), (length, -hh), (length + shear, hh), (shear, hh),
-                  (0.0, -hh)]
+        ring = [(0.0, -hh), (length, -hh), (length + shear, hh), (shear, hh)]
     else:  # 平行四辺形でない断面 (6 頂点) は登り梁として扱わない
-        coords = [(0.0, -hh), (length, -hh), (length, 0.0),
-                  (length + shear, hh), (shear, hh), (0.0, 0.0), (0.0, -hh)]
+        ring = [(0.0, -hh), (length, -hh), (length, 0.0),
+                (length + shear, hh), (shear, hh), (0.0, 0.0)]
+    if transpose:
+        ring = [(v, u) for u, v in ring]
+    if rotate:
+        rotate %= len(ring)
+        ring = ring[rotate:] + ring[:rotate]
+    coords = ring + [ring[0]]  # 閉じる
     poly_pts = [ifc.create_entity('IfcCartesianPoint', Coordinates=[float(u), float(v)])
                 for u, v in coords]
     poly = ifc.create_entity('IfcPolyline', Points=poly_pts)
@@ -939,6 +949,36 @@ class TestSlopedMemberGeometry:
         # 中心軸は勾配方向 (±0.6, 0, ±0.8) の単位ベクトル
         assert math.hypot(ax, ay) == pytest.approx(0.6)
         assert abs(az) == pytest.approx(0.8)
+
+    def test_derives_when_length_axis_is_second_profile_coord(self) -> None:
+        """長さ軸がプロファイル第 2 座標側でも幅・せい・長さを正しく導出する。"""
+        ifc = ifcopenshell.file()
+        storey = make_storey(ifc, '2FL', 3361.0)
+        beam = make_sloped_beam(
+            ifc, storey, 0.0, 0.0, 0.0, math.atan2(0.8, 0.6),
+            length=1000.0, height=120.0, width=90.0, shear=30.0, transpose=True)
+
+        result = _sloped_member_geometry(beam)
+        assert result is not None
+        _ox, _oy, _oz, _ax, _ay, _az, width, height, length = result
+        assert width == pytest.approx(90.0)
+        assert height == pytest.approx(120.0)
+        assert length == pytest.approx(1000.0)
+
+    def test_derives_when_vertex_order_starts_at_end_edge(self) -> None:
+        """端辺が頂点列の先頭でも中心軸の両端を正しく取る。"""
+        ifc = ifcopenshell.file()
+        storey = make_storey(ifc, '2FL', 3361.0)
+        beam = make_sloped_beam(
+            ifc, storey, 0.0, 0.0, 0.0, math.atan2(0.8, 0.6),
+            length=1000.0, height=120.0, width=90.0, shear=30.0, rotate=1)
+
+        result = _sloped_member_geometry(beam)
+        assert result is not None
+        _ox, _oy, _oz, _ax, _ay, _az, width, height, length = result
+        assert width == pytest.approx(90.0)
+        assert height == pytest.approx(120.0)
+        assert length == pytest.approx(1000.0)
 
     def test_returns_none_for_rectangle_profile(self) -> None:
         """矩形断面(通常の横架材)は None(通常経路が処理する)。"""
