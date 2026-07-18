@@ -11,6 +11,8 @@ section 命令にする。実際の指示線移動・改名・削除・整列は
 ある X 座標に柱があり、かつ **その通りに平行=Y 方向に走る梁** がある位置。Y通り
 (定 Y・水平な断面)は、ある Y 座標に柱があり、かつ **X 方向に走る梁** がある位置。
 柱・梁の中心座標をクラスタリングし、両方を含むクラスタの平均(=柱梁の芯)を切断位置にする。
+ただし **大引・母屋は「梁」とみなさない**(``_NON_BEAM_CLASSES``)ため、それらだけが通る
+通りは切断位置にしない。
 
 **命名**: 切断位置が名前付き通り芯(``IfcGridAxis``)に一致すればその名前、しなければ
 **中間の通り**として直前(座標の小さい側)の名前付き通りを基準に、その通りの書式で付番
@@ -31,6 +33,7 @@ from typing import TYPE_CHECKING
 
 from ..document import ColumnCommand, MemberCommand, SectionCommand
 from .grid import CLASS_X, determine_class, resolve_lines
+from .structural_class import CLASS_MOYA, CLASS_OOBIKI
 
 if TYPE_CHECKING:
     import ifcopenshell
@@ -54,6 +57,10 @@ AXIS_MATCH_TOL = 50.0
 # 断面指示線を通り芯 bbox の端からさらに外へ延ばす余白 (mm)。指示線 2 点はこの余白を
 # 足した範囲にする(既製の指示線は長さを変えず、この 2 点の中点・向きへ移動・回転する)。
 SECTION_LINE_MARGIN = 1000.0
+
+# 切断位置の検出で「梁」とみなさない横架材のクラス。大引(床組)・母屋(小屋組)は
+# 軸組図の切断位置(柱梁の芯)の判定対象から除外する(柱と重なっても通りにしない)。
+_NON_BEAM_CLASSES = frozenset({CLASS_OOBIKI, CLASS_MOYA})
 
 # いろは順(中間通りの「又」書式判定に使う)。通り芯名がこの文字だけで構成されていれば
 # いろは書式、そうでなければ数字書式(``'`` を足す)とみなす。
@@ -119,12 +126,16 @@ def _cut_positions(
     ``direction='X'``(X通り=定 X): 柱の X 座標と、Y 方向に走る梁の中心 X 座標を
     クラスタリングし、柱・梁の両方を含むクラスタの平均を切断位置にする。
     ``direction='Y'``(Y通り=定 Y): 柱の Y 座標と、X 方向に走る梁の中心 Y 座標。
+
+    大引・母屋(``_NON_BEAM_CLASSES``)は「梁」とみなさず切断位置の判定から除外する。
     """
     axis = 0 if direction == 'X' else 1
     tagged: list[tuple[float, str]] = [
         (column['position'][axis], 'column') for column in columns
     ]
     for member in members:
+        if member.get('class') in _NON_BEAM_CLASSES:
+            continue
         sx, sy = member['start'][0], member['start'][1]
         ex, ey = member['end'][0], member['end'][1]
         dx, dy = ex - sx, ey - sy

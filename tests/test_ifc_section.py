@@ -14,6 +14,10 @@ from vectorworks_plugin_import_ifc_homeskz.document import (
     validate_document,
 )
 from vectorworks_plugin_import_ifc_homeskz.ifc import section
+from vectorworks_plugin_import_ifc_homeskz.ifc.structural_class import (
+    CLASS_MOYA,
+    CLASS_OOBIKI,
+)
 
 # 通り芯(センタリング済み)。X通り(鉛直)= X1/X2/X3、Y通り(水平)= い/ろ。
 _LINES = [
@@ -94,6 +98,26 @@ class TestBuildSectionCommands:
         # Y=3000 は柱(X2∩ろ)があるが X 方向の梁が無いので対象にならない
         cmds = section.build_section_commands(_IFC, _MEMBERS, _COLUMNS)
         assert all(c['drawing_number'] != 'ろ' for c in cmds)
+
+    def test_oobiki_and_moya_not_treated_as_beams(self, patched: None) -> None:
+        # 柱があっても、その通りに走るのが大引・母屋だけなら切断位置にしない
+        columns: list[Any] = [_col(-4000.0, -3000.0), _col(-4000.0, 3000.0)]
+        members: list[Any] = [
+            {**_beam(-4000.0, -3000.0, -4000.0, 3000.0), 'class': CLASS_OOBIKI},
+            {**_beam(-4000.0, -3000.0, 4000.0, -3000.0), 'class': CLASS_MOYA},
+        ]
+        cmds = section.build_section_commands(_IFC, members, columns)
+        assert cmds == []
+
+    def test_ordinary_beam_with_class_still_detected(self, patched: None) -> None:
+        # クラスを持つ通常の横架材(大引・母屋以外)は従来どおり梁として扱う
+        columns: list[Any] = [_col(-4000.0, -3000.0)]
+        members: list[Any] = [{
+            **_beam(-4000.0, -3000.0, -4000.0, 3000.0),
+            'class': '04構造-02木造-05小屋組-01小屋梁',
+        }]
+        cmds = section.build_section_commands(_IFC, members, columns)
+        assert [c['drawing_number'] for c in cmds] == ['X1']
 
     def test_beam_only_line_excluded(self, patched: None) -> None:
         # 梁だけ(柱なし)の通りは対象外
