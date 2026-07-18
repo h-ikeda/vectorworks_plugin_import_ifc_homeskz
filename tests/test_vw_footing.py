@@ -323,6 +323,24 @@ class TestExecuteSlabsWithModifiers:
         vs_mock.CreateCustomObjectPath.assert_not_called()
 
 
+class TestPenetrateProfileTop:
+    def test_raises_top_vertices_into_slab(self) -> None:
+        # 天端(最大 v=140)を底盤天端(slab_top=50、oz=-240)の直下=絶対 49、
+        # v=50-1-(-240)=289 まで引き上げ、底辺(v=0)は動かさない。
+        vw_footing = _load(_make_vs_mock(set()))
+        profile = [[0.0, 0.0], [-150.0, 0.0], [-290.0, 140.0], [0.0, 140.0]]
+        result = vw_footing._penetrate_profile_top(profile, -240.0, 50.0)
+        assert result == [[0.0, 0.0], [-150.0, 0.0],
+                          [-290.0, 289.0], [0.0, 289.0]]
+
+    def test_keeps_profile_when_top_already_above_slab(self) -> None:
+        # 天端が既に底盤天端の直下より高い(引き上げるとかえって縮む)場合はそのまま。
+        vw_footing = _load(_make_vs_mock(set()))
+        profile = [[0.0, 0.0], [-150.0, 0.0], [-290.0, 400.0], [0.0, 400.0]]
+        result = vw_footing._penetrate_profile_top(profile, -240.0, 50.0)
+        assert result == profile
+
+
 class TestSlabStyles:
     def test_applies_existing_style_for_default_thickness(self) -> None:
         # 150mm 底盤は既存の既定スタイルをそのまま適用する(複製しない)
