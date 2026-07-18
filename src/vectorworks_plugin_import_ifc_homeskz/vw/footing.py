@@ -10,21 +10,14 @@
 「足す」形で Slab PIO に噛み合わせられない**(VW 2026 で確認。``CreateCustomObjectPath``
 は add で噛み合うが作成時ダイアログ+再実行クラッシュ、``CreateCustomObjectN`` +
 ``SetCustomObjectProfileGroup`` の後付けは未確定で底盤不可視、``ModifySlab`` は「選択が
-間違っています」)。**連続する地中梁は 1 本の 3D パスにまとめ(屈曲部=向きの変わる
-コーナーも統合、解析フェーズ)、台形断面をパスに沿って掃引した「パスに沿った押し出し」
-の PIO でモデリングする**。地中梁を **2 回** 作って表す:
-(1) **削り取りモディファイア**(``_draw_modifier_group``)を ``SetCustomObjectProfileGroup``
-で ``CreateSlab`` の通常スラブに渡して底盤を**削り取り(clip)**、地中梁の位置で底盤の
-スラブスタイルの層(躯体・捨てコン・砕石)を除去して断面に写り込まないようにする。削り取りは
-可視化しないため、確実に動く台形プリズム(``_draw_segment_prisms``)で行う(削り取り体積は
-パス掃引と同一)。(2) **可視のパス押し出し PIO**(``_draw_beam_solids`` → ``_draw_path_extrude``。
-``CreateCustomObjectPath('Extrude Along Path', path, profileGroup)``。実オブジェクトの
-エクスポートに一致)を同じ ``F-底盤`` レイヤ・同じ基礎スラブクラスで置き、削り取った位置を
-地中梁のコンクリートで埋める。ブール結合はしないが同一クラス・同一位置で一体に見える。
-モディファイアの無い底盤は削り取りをせず ``CreateSlab`` のみ。パス押し出し PIO を作れない
-環境では可視も台形プリズムにフォールバックする(``_draw_segment_prisms``)。**素の
-``CreateExtrudeAlongPath`` は断面をワールド座標に置くと巨大化するため使わない**(#166 の
-不具合。可視は実オブジェクトと同じ ``Extrude Along Path`` PIO で作る)。
+間違っています」)。そのため地中梁は台形プリズムを **2 回** 作って表す(``_draw_modifier``):
+(1) **削り取りモディファイア**を ``SetCustomObjectProfileGroup`` で ``CreateSlab`` の通常
+スラブに渡して底盤を**削り取り(clip)**、地中梁の位置で底盤のスラブスタイルの層
+(躯体・捨てコン・砕石)を除去して断面に写り込まないようにする(``_draw_modifier_group``。
+以前から安定して動く挙動)。(2) 同じ台形プリズムを**独立した可視 3D ソリッド**
+(``_draw_beam_solids``)として同じ ``F-底盤`` レイヤ・同じ基礎スラブクラスで置き、削り取った
+位置を地中梁のコンクリートで埋める。ブール結合はしないが同一クラス・同一位置で一体に見える。
+モディファイアの無い底盤は削り取りをせず ``CreateSlab`` のみ。
 
 底盤(基礎底盤系)にはスラブスタイル(``基礎スラブ - コンクリート {厚}mm /
 捨てコン …mm / 砕石 …mm``)を適用する。既定=150mm はその既存スタイルをそのまま、
@@ -41,7 +34,6 @@
 """
 from __future__ import annotations
 
-import math
 from typing import Any
 
 import vs
@@ -75,7 +67,7 @@ _CONCRETE_COMPONENT_INDEX = 1
 # 結合失敗時のダイアログを抑止する(インポート中に手動操作を求められないように)。
 _JOIN_SHOW_ALERTS = False
 
-# --- 地中梁(パスに沿った押し出し)の描画 ---
+# --- 地中梁(台形プリズム)の描画 ---
 # 地中梁は底盤コンクリートに一体の下り梁だが、**VectorScript では地中梁を「足す」形で
 # Slab PIO に噛み合わせることができない**(VW 2026 で確認):
 #   - ``CreateCustomObjectPath('Slab', 外形, 群)`` は add で噛み合うが Slab プラグインが
@@ -83,187 +75,82 @@ _JOIN_SHOW_ALERTS = False
 #   - ``CreateCustomObjectN``/``SetCustomObjectProfileGroup`` の後付けはスラブ編集中の
 #     「新規追加」扱いで未確定になり底盤が**不可視**になる。
 #   - ``ModifySlab`` は「選択が間違っています」で失敗し別図形が残る。
-# **連続する地中梁は 1 本の 3D パスにまとめ(屈曲部も統合、解析フェーズ)、台形断面をパスに
-# 沿って掃引した「パスに沿った押し出し」の PIO でモデリングする**。地中梁を 2 回作って表す:
+# そのため地中梁は台形プリズムを **2 回** 作って表す:
 #   1. **削り取りモディファイア**(``_draw_modifier_group`` → ``SetCustomObjectProfileGroup``)。
-#      台形プリズム群を ``CreateSlab``(通常スラブ)のプロファイル群として渡すと底盤を
-#      **削り取る(clip)**。削り取りは以前から安定して動く台形プリズムで行う(パス押し出し
-#      PIO をプロファイル群へ入れる挙動は未検証で、削り取り結果はプリズムでも掃引でも
-#      同一体積になるため、可視化しない削り取りは確実なプリズムを使う)。底盤のスラブ
-#      スタイル(躯体・捨てコン・砕石)を地中梁の位置で除去し断面に写り込まないようにする。
-#   2. **可視のパス押し出し PIO**(``_draw_beam_solids`` → ``_draw_path_extrude``)。削り取った
-#      位置を、パスに沿った押し出しの 3D ソリッドで埋める。底盤と同じ ``F-底盤`` レイヤ・
-#      同じ基礎スラブクラスで置き、同一クラス・同一位置で一体に見える。
-#
-# **可視のパス押し出し PIO は VW の実オブジェクトのエクスポートに一致させる**
-# (``CreateExtrudeAlongPath`` の素のソリッドは断面をワールド座標に置くと巨大化するため
-# 使わない。実オブジェクトは PIO の ``Extrude Along Path`` で作られる):
-#   - path = degree-1(折れ線)の NURBS カーブ。``CreateCustomObjectPath`` はパスの先頭
-#     頂点を PIO の原点へ移すため、パスは先頭頂点を原点にした相対座標で作る。
-#   - profile = 2D の ``Poly``(u=水平・v=鉛直)を ``BeginGroup``/``EndGroup`` で包んだ
-#     グループ。profile の (0,0)=断面基準点が PIO 原点=パス始端に一致する(解析フェーズの
-#     path は断面基準点 (0,0) の軌跡なので、これで各区間が元の地中梁を復元する)。
-#   - obj = ``CreateCustomObjectPath('Extrude Along Path', path, profileGroup)`` →
-#     ``SetObjectVariableBoolean(obj, 1167, True)`` → ``ResetOrientation3D`` →
-#     ``Move3D(先頭頂点の絶対位置)`` → レコード(Scale=Uniform・Factor=1・
-#     Lock Profile Plane=True・Fix Profile)を ``SetRField`` → ``ResetObject``。
-# パス押し出しの最終挙動(断面の左右の向き・高さ・削り取り)は VW 上で最終確認する方針。
-_EXTRUDE_ALONG_PATH_PLUGIN = 'Extrude Along Path'
-_MODIFIER_NURBS_DEGREE = 1
-_MODIFIER_NURBS_BY_CTRL = True
-# パス押し出し PIO・プロファイルに立てるオブジェクト変数(実オブジェクトのエクスポートに
-# 一致)。1167=PIO 本体(True)、1160=プロファイル(レイヤ平面のワールド 3D、False)。
-_MODIFIER_EXTRUDE_VAR = 1167
-_MODIFIER_EXTRUDE_VALUE = True
-_MODIFIER_PLANE_VAR = 1160
-_MODIFIER_PLANE_VALUE = False
-# Extrude Along Path PIO のレコード名・フィールド名・値(実オブジェクトのエクスポートに
-# 一致)。Fix Profile はローカライズされた真偽値のため、日本語版の "いいえ"(No)を使う。
-_EAP_RECORD = 'Extrude Along Path'
-_EAP_FIELD_SCALE = 'Scale'
-_EAP_SCALE_UNIFORM = 'Uniform'
-_EAP_FIELD_FACTOR = 'Factor'
-_EAP_FACTOR = '1'
-_EAP_FIELD_LOCK_PLANE = 'Lock Profile Plane'
-_EAP_LOCK_PLANE = 'True'
-_EAP_FIELD_FIX_PROFILE = 'Fix Profile'
-_EAP_FIX_PROFILE = 'いいえ'
-# 断面 u(水平)の符号。VW のパス押し出しが profile-x を進行方向のどちら側に向けるかは
-# 実機依存のため、左右が反転していたらこの符号で反転できるようにする(解析フェーズの
-# u=進行方向左向き)。
-_PROFILE_U_SIGN = 1.0
-# 削り取り(フォールバック)用の台形プリズムを鉛直軸 v を +Z に向ける傾き(度)・
-# 押し出し方向を方位角へ向ける追加回転(度)。
+#      ``CreateSlab``(通常スラブ)のプロファイル群として渡すと底盤を**削り取る(clip)**。
+#      これは以前から安定して動く挙動で、底盤のスラブスタイル(躯体・捨てコン・砕石の層)を
+#      地中梁の位置で除去し、地中梁断面にこれらの層が写り込まないようにする。
+#   2. **可視の 3D ソリッド**(``_draw_beam_solids``)。同じ台形プリズムを独立したソリッドとして
+#      底盤と同じ ``F-底盤`` レイヤ・同じ基礎スラブクラスで置き、削り取った位置を地中梁の
+#      コンクリートで埋める。ブール結合はしないが、同一クラス・同一位置なので一体に見える。
+# 台形断面(u=水平幅・v=鉛直)を XY 平面に描いて鉛直(+Z)に push し、断面を起こして
+# 鉛直軸 v を +Z に向ける傾き(度)。続けて押し出し方向(+Z→水平)を方位角へ向ける
+# 追加回転(azimuth + このオフセット、度)。幅軸 u が走る向き +90 度に一致する。
+# Z は絶対値そのまま(``origin`` の z=梁下端のワールド Z)。回転規約は解析フェーズ
+# (ifc/footing.py の _ground_beam_modifier)と一致させており、最終的な向き・高さ・
+# 削り取りは VectorWorks 上で確認する方針(他要素と同じ)。
 _MODIFIER_TILT_DEG = 90.0
 _MODIFIER_AZIMUTH_OFFSET_DEG = 90.0
+# 各モディファイア/地中梁ソリッドに立てるオブジェクト変数(実オブジェクトのエクスポートで
+# 底盤モディファイアに False が立つ。レイヤ平面のワールド 3D として扱わせる)。
+_MODIFIER_PLANE_VAR = 1160
+_MODIFIER_PLANE_VALUE = False
 
 
-def _draw_path_extrude(modifier: Any) -> Any:
-    """統合地中梁パス 1 本を「パスに沿った押し出し」PIO として描き、ハンドルを返す。
+def _draw_modifier(modifier: Any) -> Any:
+    """地中梁 1 件を台形プリズム(押し出しソリッド)として描き、そのハンドルを返す。
 
-    実オブジェクトのエクスポートに一致させる(モジュール冒頭の解説参照):
-
-    1. 掃引パスを degree-1 の NURBS カーブにする。``CreateCustomObjectPath`` がパスの
-       先頭頂点を PIO 原点へ移すため、パスは**先頭頂点を原点にした相対座標**で作る。
-    2. 台形断面(``profile``、u=進行方向左向き・v=鉛直)を 2D の ``Poly`` にして
-       ``BeginGroup``/``EndGroup`` で包んだプロファイルグループにする。profile の (0,0)=
-       断面基準点が PIO 原点=パス始端に一致する。
-    3. ``CreateCustomObjectPath('Extrude Along Path', path, profileGroup)`` で PIO を作り、
-       オブジェクト変数・向きのリセット・先頭頂点の絶対位置への ``Move3D``・レコードの
-       設定を行う。
-
-    生成できなければ(NIL)None を返し、呼び出し側が区間ごとの直線押し出しにフォールバック
-    する。
+    台形断面(``profile``、u=幅・v=鉛直)を XY 平面に描いて ``BeginXtrd`` で鉛直
+    (0→depth)に押し出し、断面を起こして(``Rotate3D(90,0,0)``)方位角へ回し
+    (``Rotate3D(0,0,azimuth+90)``)、断面原点の**絶対位置**(``origin`` の z=梁下端の
+    ワールド Z)へ移動する。**Z は絶対値そのまま**にする=削り取りモディファイアとして
+    底盤(パスは作図レイヤ平面=絶対 Z の基礎ストーリ)に渡しても、可視ソリッドとして
+    置いても、ワールド絶対 Z で描けば正しい高さに来る。押し出しソリッドにオブジェクト変数
+    1160=False(レイヤ平面のワールド 3D)を立てる(実オブジェクトのエクスポートに一致)。
+    削り取り・可視ソリッドの両方でこの 1 件の描画を使う(地中梁を 2 回作る)。
     """
     profile = modifier['profile']
-    path = modifier['path']
-    if len(path) < 2:
-        return None
-    p0 = path[0]
-    # パスは先頭頂点を原点にした相対座標(CreateCustomObjectPath が先頭を PIO 原点へ移す)。
-    nurbs = vs.CreateNurbsCurve(
-        (0.0, 0.0, 0.0), _MODIFIER_NURBS_BY_CTRL, _MODIFIER_NURBS_DEGREE)
-    if nurbs == vs.Handle(0):
-        return None
-    for p in path[1:]:
-        vs.AddVertex3D(nurbs, (p[0] - p0[0], p[1] - p0[1], p[2] - p0[2]))
-    # 台形断面(u=水平・v=鉛直)を 2D Poly にしてグループで包む。
-    vs.BeginGroup()
+    ox, oy, oz = modifier['origin']
+    vs.BeginXtrd(0.0, modifier['depth'])
     vs.ClosePoly()
-    coords: list[float] = []
-    for u, v in profile:
-        coords.append(_PROFILE_U_SIGN * u)
-        coords.append(v)
-    vs.Poly(*coords)
-    poly_h = vs.LNewObj()
-    vs.SetObjectVariableBoolean(poly_h, _MODIFIER_PLANE_VAR, _MODIFIER_PLANE_VALUE)
-    vs.EndGroup()
-    profile_group = vs.LNewObj()
-    obj = vs.CreateCustomObjectPath(_EXTRUDE_ALONG_PATH_PLUGIN, nurbs, profile_group)
-    if obj == vs.Handle(0):
-        # 失敗時はパス/プロファイルの残骸を消してから区間押し出しにフォールバックする。
-        vs.DelObject(nurbs)
-        vs.DelObject(profile_group)
-        return None
-    vs.SetObjectVariableBoolean(obj, _MODIFIER_EXTRUDE_VAR, _MODIFIER_EXTRUDE_VALUE)
+    vs.BeginPoly()
+    vs.MoveTo(profile[0][0], profile[0][1])
+    for u, v in profile[1:]:
+        vs.LineTo(u, v)
+    vs.EndPoly()
+    vs.EndXtrd()
+    solid = vs.LNewObj()
+    vs.SetObjectVariableBoolean(solid, _MODIFIER_PLANE_VAR, _MODIFIER_PLANE_VALUE)
     vs.ResetOrientation3D()
-    vs.Move3D(p0[0], p0[1], p0[2])
-    vs.SetRField(obj, _EAP_RECORD, _EAP_FIELD_SCALE, _EAP_SCALE_UNIFORM)
-    vs.SetRField(obj, _EAP_RECORD, _EAP_FIELD_FACTOR, _EAP_FACTOR)
-    vs.SetRField(obj, _EAP_RECORD, _EAP_FIELD_LOCK_PLANE, _EAP_LOCK_PLANE)
-    vs.SetRField(obj, _EAP_RECORD, _EAP_FIELD_FIX_PROFILE, _EAP_FIX_PROFILE)
-    vs.ResetObject(obj)
-    return obj
-
-
-def _draw_segment_prisms(modifier: Any) -> list[Any]:
-    """統合パスの各区間を直線押し出しした台形プリズム群を返す。
-
-    削り取りモディファイア(``_draw_modifier_group``)と、パス押し出し PIO を作れない環境
-    での可視ソリッドのフォールバックに使う。パスの連続する 2 頂点ごとに、台形断面
-    (u=進行方向左向き・v=鉛直)を鉛直に押し出し(``BeginXtrd``)、断面を起こして
-    (``Rotate3D(90,0,0)``)区間の方位角へ回し(``Rotate3D(0,0,azimuth+90)``)、区間始点の
-    **絶対位置**へ移動する。1 区間 = 1 プリズムで、統合前の直線押し出しと同じ形状になる
-    (削り取り体積はパス掃引と同一)。
-    """
-    profile = modifier['profile']
-    path = modifier['path']
-    solids: list[Any] = []
-    for a, b in zip(path, path[1:]):
-        dx, dy = b[0] - a[0], b[1] - a[1]
-        depth = math.hypot(dx, dy)
-        if depth <= 0.0:
-            continue
-        azimuth = math.degrees(math.atan2(dy, dx))
-        vs.BeginXtrd(0.0, depth)
-        vs.ClosePoly()
-        vs.BeginPoly()
-        vs.MoveTo(profile[0][0], profile[0][1])
-        for u, v in profile[1:]:
-            vs.LineTo(u, v)
-        vs.EndPoly()
-        vs.EndXtrd()
-        solid = vs.LNewObj()
-        vs.SetObjectVariableBoolean(
-            solid, _MODIFIER_PLANE_VAR, _MODIFIER_PLANE_VALUE)
-        vs.ResetOrientation3D()
-        vs.Rotate3D(_MODIFIER_TILT_DEG, 0.0, 0.0)
-        vs.Rotate3D(0.0, 0.0, azimuth + _MODIFIER_AZIMUTH_OFFSET_DEG)
-        vs.Move3D(a[0], a[1], a[2])
-        solids.append(solid)
-    return solids
+    vs.Rotate3D(_MODIFIER_TILT_DEG, 0.0, 0.0)
+    vs.Rotate3D(0.0, 0.0, modifier['azimuth'] + _MODIFIER_AZIMUTH_OFFSET_DEG)
+    vs.Move3D(ox, oy, oz)
+    return solid
 
 
 def _draw_modifier_group(modifiers: list[Any]) -> Any:
-    """削り取りモディファイア群(台形プリズム)を 1 つのグループにまとめてハンドルを返す。
+    """削り取りモディファイア群を 1 つのグループにまとめてハンドルを返す。
 
     ``SetCustomObjectProfileGroup(slab, グループ)`` で ``CreateSlab`` の通常スラブに
     渡すと底盤を**削り取る(clip)**。地中梁の位置で底盤のスラブスタイルの層
     (躯体・捨てコン・砕石)を除去し、地中梁断面にこれらが写り込まないようにする。
-    削り取りは可視化しないため、確実に動く台形プリズム(``_draw_segment_prisms``)で行う
-    (削り取り体積はパス掃引と同一)。
     """
     vs.BeginGroup()
     for modifier in modifiers:
-        _draw_segment_prisms(modifier)
+        _draw_modifier(modifier)
     vs.EndGroup()
     return vs.LNewObj()
 
 
 def _draw_beam_solids(modifiers: list[Any], class_name: str) -> None:
-    """地中梁を可視のパス押し出し PIO として描く(削り取りモディファイアとは別の実体)。
+    """地中梁を可視の 3D ソリッドとして描く(削り取りモディファイアとは別の 2 つ目の実体)。
 
-    削り取りで底盤から除去した位置を、パスに沿った押し出しソリッドで埋める。底盤と同じ
-    基礎スラブクラス(``class_name``)を付け、同一コンクリートとして一体に見せる。PIO を
-    作れない環境では区間ごとの台形プリズムにフォールバックする。
+    削り取りで底盤から除去した位置を、同じ台形プリズムのソリッドで埋める。底盤と同じ
+    基礎スラブクラス(``class_name``)を付け、同一コンクリートとして一体に見せる。
     """
     for modifier in modifiers:
-        obj = _draw_path_extrude(modifier)
-        if obj is not None:
-            vs.SetClass(obj, class_name)
-        else:
-            for solid in _draw_segment_prisms(modifier):
-                vs.SetClass(solid, class_name)
+        solid = _draw_modifier(modifier)
+        vs.SetClass(solid, class_name)
 
 
 def draw_wall(command: WallCommand) -> Any:
@@ -445,17 +332,16 @@ def draw_slab(
     """slab 命令 1 件をスラブオブジェクトとして描画する。
 
     外形ポリゴンを閉じた多角形として作成し、標準の ``CreateSlab`` でスラブにする
-    (底盤の有無に関わらず確実に描画される)。**地中梁を持つ底盤は、地中梁を 2 回作って
-    表す**(VectorScript では地中梁を「足す」形で Slab PIO に噛み合わせられないため。
-    モジュール冒頭の解説参照):
+    (底盤の有無に関わらず確実に描画される)。**地中梁を持つ底盤は、地中梁の台形プリズムを
+    2 回作って表す**(VectorScript では地中梁を「足す」形で Slab PIO に噛み合わせられない
+    ため。``_draw_modifier`` 節参照):
 
     1. **削り取りモディファイア**: 台形プリズム群を ``SetCustomObjectProfileGroup`` で
-       ``CreateSlab`` の通常スラブに渡し、底盤を**削り取る(clip)**(``_draw_modifier_group``)。
-       地中梁の位置で底盤のスラブスタイルの層(躯体・捨てコン・砕石)を除去し、地中梁断面に
-       写り込まないようにする。削り取りは可視化しないため確実に動く台形プリズムで行う。
-    2. **可視のパス押し出し PIO**: パスに沿った押し出し(``_draw_beam_solids`` →
-       ``_draw_path_extrude``)を底盤と同じ ``F-底盤`` レイヤ・同じ基礎スラブクラスで置き、
-       削り取った位置を地中梁のコンクリートで埋める。
+       ``CreateSlab`` の通常スラブに渡し、底盤を**削り取る(clip)**。地中梁の位置で底盤の
+       スラブスタイルの層(躯体・捨てコン・砕石)を除去し、地中梁断面に写り込まないようにする。
+    2. **可視の 3D ソリッド**: 同じ台形プリズムを独立したソリッド(``_draw_beam_solids``)として
+       底盤と同じ ``F-底盤`` レイヤ・同じ基礎スラブクラスで置き、削り取った位置を地中梁の
+       コンクリートで埋める。
 
     モディファイアの無い底盤は削り取りをせず ``CreateSlab`` のみ。底盤にはコンクリート厚に
     応じたスラブスタイルを適用する(``_apply_slab_style``)。スラブ天端の絶対 Z を
