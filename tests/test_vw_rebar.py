@@ -153,6 +153,19 @@ class TestExecuteRebars:
             0.0, 0.0, 50.0, 3000.0, 0.0, 50.0,
             3000.0, 2000.0, 50.0, 0.0, 2000.0, 50.0)
 
+    def test_path_z_unchanged_when_getzvals_missing(self) -> None:
+        # GetZVals 自体が無い環境(VW 2018 以前)は AttributeError を捕捉してレイヤ Z=0
+        # 相当(補正なし)にフォールバックする。
+        vs_mock = _make_vs_mock({'F-底盤'})
+        vs_mock.GetZVals.side_effect = AttributeError
+        vw_rebar = _load(vs_mock)
+
+        vw_rebar.execute_rebars([make_slab_command()])
+
+        assert vs_mock.Poly3D.call_args.args == (
+            0.0, 0.0, 50.0, 3000.0, 0.0, 50.0,
+            3000.0, 2000.0, 50.0, 0.0, 2000.0, 50.0)
+
     def test_skips_when_layer_missing(self) -> None:
         vs_mock = _make_vs_mock(set())
         vw_rebar = _load(vs_mock)
