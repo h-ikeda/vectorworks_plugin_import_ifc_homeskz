@@ -301,6 +301,12 @@ class TestExecuteSlabsWithModifiers:
         move_calls = [c.args for c in vs_mock.Move3D.call_args_list]
         assert (760.0, 5520.0, -240.0) in move_calls
         assert (760.0, 5520.0, -240.0 - 50.0) not in move_calls
+        # 断面天端(v=140)を底盤天端(elevation=50)の直下=絶対 49 まで引き上げて底盤へ
+        # 貫入させる(v=50-1-(-240)=289)。重なりが無いと ModifySlab の add が失敗する。
+        line_calls = [c.args for c in vs_mock.LineTo.call_args_list]
+        assert (-290.0, 289.0) in line_calls        # 天端頂点を引き上げ(重なり確保)
+        assert (0.0, 289.0) in line_calls
+        assert (-290.0, 140.0) not in line_calls     # 元の面接触(重なり無し)は残さない
         # スラブとして天端・バインド・スタイル対象は従来どおり
         vs_mock.SetSlabHeight.assert_called_once_with(slab, 50.0)
 
@@ -315,6 +321,24 @@ class TestExecuteSlabsWithModifiers:
         vs_mock.SetCustomObjectProfileGroup.assert_not_called()
         vs_mock.CreateCustomObjectN.assert_not_called()
         vs_mock.CreateCustomObjectPath.assert_not_called()
+
+
+class TestPenetrateProfileTop:
+    def test_raises_top_vertices_into_slab(self) -> None:
+        # 天端(最大 v=140)を底盤天端(slab_top=50、oz=-240)の直下=絶対 49、
+        # v=50-1-(-240)=289 まで引き上げ、底辺(v=0)は動かさない。
+        vw_footing = _load(_make_vs_mock(set()))
+        profile = [[0.0, 0.0], [-150.0, 0.0], [-290.0, 140.0], [0.0, 140.0]]
+        result = vw_footing._penetrate_profile_top(profile, -240.0, 50.0)
+        assert result == [[0.0, 0.0], [-150.0, 0.0],
+                          [-290.0, 289.0], [0.0, 289.0]]
+
+    def test_keeps_profile_when_top_already_above_slab(self) -> None:
+        # 天端が既に底盤天端の直下より高い(引き上げるとかえって縮む)場合はそのまま。
+        vw_footing = _load(_make_vs_mock(set()))
+        profile = [[0.0, 0.0], [-150.0, 0.0], [-290.0, 400.0], [0.0, 400.0]]
+        result = vw_footing._penetrate_profile_top(profile, -240.0, 50.0)
+        assert result == profile
 
 
 class TestSlabStyles:
