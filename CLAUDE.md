@@ -333,7 +333,7 @@ VW 2026 でレイヤをストーリレベルに正しくバインドするには
 
 ### 断面ビューポート＝軸組図（ifc/section.py → vw/section.py）
 
-伏図（下記）がモデルを真上から見た平面図をシートに配置するのに対し、断面ビューポート（軸組図）は建物を**鉛直面で切断した断面図**を各通りごとにシートに配置する。**断面ビューポートは VectorScript で新規作成できない**（`CreateSectionViewport` は SDK＝VCOM にはあるが `vs`＝VectorScript／Python には公開されておらず、スクリプト書き出しにも真の切断が保存されない＝側面ビューとしてしか出ない）。そのため運用として、あらかじめシートレイヤ `A`（タイトル 軸組図）に `X1`〜`X20`・`Y1`〜`Y20` の **40 枚の断面ビューポートを手動で用意**しておき（各ビューポートには断面指示線＝`Section Line2` PIO が対応し、指示線の位置・図番・タイトルがビューポートを駆動する。既製の指示線は全て同じ位置・水平＝X 方向に走る）、本スクリプトは**その断面指示線とビューポートの位置・図番・タイトルだけを操作**する（新規作成はしない）。
+伏図（下記）がモデルを真上から見た平面図をシートに配置するのに対し、断面ビューポート（軸組図）は建物を**鉛直面で切断した断面図**を各通りごとにシートに配置する。**断面ビューポートは VectorScript で新規作成できない**（`CreateSectionViewport` は SDK＝VCOM にはあるが `vs`＝VectorScript／Python には公開されておらず、スクリプト書き出しにも真の切断が保存されない＝側面ビューとしてしか出ない）。そのため運用として、あらかじめシートレイヤ `A`（タイトル 軸組図）に `X1`〜`X20`・`Y1`〜`Y20` の **40 枚の断面ビューポートを手動で用意**しておき（各ビューポートには断面指示線＝`Section Line2` PIO が対応し、指示線の位置・図番・タイトルがビューポートを駆動する。既製の指示線は **X通り＝鉛直・Y通り＝水平と方向別に正しい向きで用意**しておく）、本スクリプトは**その断面指示線とビューポートの位置・図番・タイトルだけを操作**する（向きは変えず位置だけ動かす。新規作成はしない）。
 
 - 解析（`ifc/section.py` の `build_section_commands(ifc_file, members, columns)`）: **柱と梁の両方が通る通り＝柱梁の芯**を切断位置として X・Y 方向それぞれ検出し、既製ビューポートへの割り当てと通りの名前を決める。
   - **切断位置の検出**（`_cut_positions`）: X通り（定 X・鉛直な断面）は、ある X 座標に**柱**（`columns` の `position` の X）があり、かつ **その通りに平行＝Y 方向に走る梁**（`members` の `start`/`end` で `|Δx|<|Δy|` の材の中心 X）がある位置。Y通り（定 Y・水平な断面）は、ある Y 座標に柱があり、かつ **X 方向に走る梁** がある位置。柱・梁の中心座標を `CLUSTER_TOL`（既定 100mm）でクラスタリングし、**柱と梁の両方を含むクラスタ**（柱だけ・梁だけの通りは除外）の平均＝柱梁の芯を切断位置にする。座標は他要素と同じグリッド中心オフセット済み。
@@ -341,13 +341,13 @@ VW 2026 でレイヤをストーリレベルに正しくバインドするには
   - **割り当て**（`_commands_for_direction`）: X通りの切断位置を昇順に既製ビューポート `X1`, `X2`, … へ、Y通りを `Y1`, `Y2`, … へ順に割り当てる（各方向 `MAX_PER_DIRECTION`＝20 枚まで。超過分は切り捨て）。命令（`SectionCommand`）は `direction`（X/Y）・`source_number`（流用する既製図番 `X{k}`/`Y{k}`）・`drawing_number`（新しい通り名）・`drawing_title`（通り名 + `通り`）・`line_start`/`line_end`（断面指示線を移動・回転する 2 点＝X通りは定 X の鉛直線・Y通りは定 Y の水平線、通り芯 bbox に `SECTION_LINE_MARGIN`＝既定 1000mm の余白）を持つ。通り芯が無ければ空リストを返す。
 - 描画（`vw/section.py` の `execute_sections`）: 命令が空なら即 0 を返す。そうでなければ全レイヤを走査して**既製の断面指示線を `Drawing Number` → ハンドルの辞書**にする（`_index_section_lines`。各オブジェクトに `Section Line2` レコードの `Drawing Number` を問い合わせ非空のものを集める）。各命令について:
   1. `source_number` で既製の指示線を引き、リンク先ビューポート（`Linked To`＝例 `Y1/A` を `GetObject` で解決）を改名前に取得する。
-  2. 指示線を移動・回転する（`_place_section_line`）＝既製は水平なので **X通りは中心まわりに `_ROTATE_X_DEG`＝90 度回転**してから、`line_start`/`line_end` の中点へ `HMove` する（長さは変えず位置と向きだけ操作する）。
+  2. 指示線を移動する（`_place_section_line`）＝既製は方向別に正しい向き（X通り＝鉛直・Y通り＝水平）で用意されているため回転はせず、`line_start`/`line_end` の中点へ中心を `HMove` するだけにする（長さも向きも変えない）。
   3. 指示線の `Drawing Number`／`Drawing Title` を新しい通り名に `SetRField` で変更し `ResetObject`。
   4. リンク先ビューポートの図番・図面タイトル（`SetObjectVariableString` selector 1033／1032）も合わせる。
   5. 使わなかった既製の指示線（`_PREMADE_NUMBER_RE`＝`^[XY]\d+$` に一致し未使用のもの）とそのビューポートを `DelObject` で削除する（手置きの指示線には触れない）。
   6. 残ったビューポートを更新（`UpdateVP`）してシートレイヤ上で重ならないように格子状に並べる（`_arrange_viewports`＝左上 `_ARRANGE_ORIGIN` から 1 行 `_ARRANGE_COLUMNS`＝5 枚ずつ、各ビューポートの実サイズ `GetBBox` に `_ARRANGE_GAP`＝300mm の余白を足して詰める）。
 
-  **既製ビューポート＝40 枚の手動用意・シートレイヤ名 `A`・PIO 名 `Section Line2`・フィールド名（`Drawing Number`／`Drawing Title`／`Linked To`）・断面指示線の検索/移動/回転/改名/削除/整列の各 vs 呼び出しは VectorWorks 上で最終確認する方針**（実オブジェクトのスクリプト書き出しに一致させ、`vw/section.py`・`ifc/section.py` 冒頭の名前付き定数に集約）。実行順は伏図（`execute_sheets`）の後（`execute_document`。デザインレイヤ=モデルと既製ビューポートを参照するため、レイヤ生成・並べ替え・構造材描画の完了後）。
+  **既製ビューポート＝40 枚の手動用意・シートレイヤ名 `A`・PIO 名 `Section Line2`・フィールド名（`Drawing Number`／`Drawing Title`／`Linked To`）・断面指示線の検索/移動/改名/削除/整列の各 vs 呼び出しは VectorWorks 上で最終確認する方針**（実オブジェクトのスクリプト書き出しに一致させ、`vw/section.py`・`ifc/section.py` 冒頭の名前付き定数に集約）。実行順は伏図（`execute_sheets`）の後（`execute_document`。デザインレイヤ=モデルと既製ビューポートを参照するため、レイヤ生成・並べ替え・構造材描画の完了後）。
 
 ### シートレイヤ・伏図（ifc/sheet.py → vw/sheet.py）
 
