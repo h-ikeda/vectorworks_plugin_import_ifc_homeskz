@@ -7,6 +7,7 @@ from vectorworks_plugin_import_ifc_homeskz.ifc.structural_class import (
     CLASS_KOYAZUKA,
     CLASS_KUDABASHIRA,
     CLASS_MOYA,
+    CLASS_NOBORIBARI,
     CLASS_TOSHIBASHIRA,
     CLASS_YUKABARI,
     member_class_from_name,
@@ -39,6 +40,8 @@ class TestMemberClassFromName:
         assert member_class_from_name('木梁:床大梁:1') == CLASS_YUKABARI
         assert member_class_from_name('木梁:甲乙梁:1') == CLASS_YUKABARI
         assert member_class_from_name('木梁:母屋:1') == CLASS_MOYA
+        # 登り梁(傾斜梁)は小屋組の登り梁クラスに直接対応する
+        assert member_class_from_name('木梁:登り梁:1') == CLASS_NOBORIBARI
 
     def test_unknown_types_return_none(self) -> None:
         assert member_class_from_name('木梁:隅木・谷木:1') is None

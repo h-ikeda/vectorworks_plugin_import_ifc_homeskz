@@ -7,8 +7,14 @@ IFC の IfcBeam / IfcMember を走査し、各階の横架材天端レイヤ
 ホームズ君 IFC の梁は断面中心線(プロファイル中心の押し出し軸)で配置される。
 一方 VW 構造材ツールの断面基準点は左右中央・上端(天端中央)なので、
 断面中心線を軸直交方向に背/2 だけ持ち上げた天端中央線を命令に格納する。
-Axis 属性に Z 成分を持つ梁(登り梁・隅木等の傾斜梁)は始端と終端の
+Axis 属性に Z 成分を持つ梁(隅木等の傾斜梁)は始端と終端の
 天端 Z(``elevation``/``end_elevation``)が異なる傾斜した命令になる。
+
+登り梁は矩形断面ではなく、材の側面(長さ×せいの平行四辺形)を厚み方向へ
+押し出した任意断面(``IfcArbitraryClosedProfileDef``)で表される。矩形断面を
+前提とする ``_get_profile_dims`` では拾えず取りこぼされるため、
+``_sloped_member_geometry`` で平行四辺形の 4 頂点から中心軸・断面・傾斜を導出し、
+母屋・棟木と同じスキームで専用レイヤ(``n-登り梁``)に分離して配置する。
 
 横架材同士が食い込んでいる箇所(甲乙梁の T 字や出隅の L 字の取り合い等)は、
 相互の食い込み量を比べて勝ち負けを判定し、負け側(深く食い込む側)の端部を
@@ -20,15 +26,22 @@ import math
 from typing import TYPE_CHECKING
 
 from ..document import MemberCommand, StoryBoundCommand
+from .footing import _add, _scale, _world_solid
 from .grid import resolve_lines
 from .story import (
     LEVEL_BEAM_TOP,
     LEVEL_EAVES,
     LEVEL_MOYA,
+    LEVEL_NOBORIBARI,
     layer_prefix_for,
     resolve_beam_top_offset,
 )
-from .structural_class import CLASS_MOYA, CLASS_MUNAGI, resolve_member_class
+from .structural_class import (
+    CLASS_MOYA,
+    CLASS_MUNAGI,
+    CLASS_NOBORIBARI,
+    resolve_member_class,
+)
 
 if TYPE_CHECKING:
     import ifcopenshell
@@ -108,6 +121,77 @@ def _get_profile_dims(
                 continue
             return float(area.XDim), float(area.YDim), float(item.Depth)
     return None
+
+
+def _sloped_member_geometry(
+    element: ifcopenshell.entity_instance,
+) -> tuple[float, float, float, float, float, float, float, float, float] | None:
+    """任意断面(平行四辺形の側面シルエット)を厚み方向に押し出した傾斜梁
+    (登り梁等)の幾何情報を返す。矩形断面の材や対象外の材は None を返す。
+
+    ホームズ君 IFC の登り梁は矩形断面(``IfcRectangleProfileDef`` を軸方向へ押し出し)
+    ではなく、材の側面(長さ×せいの平行四辺形。端部の直切りでせん断される)を表す
+    ``IfcArbitraryClosedProfileDef`` を厚み方向へ押し出したソリッドで表される。この
+    ため ``_get_profile_dims`` では拾えず、対処しないと横架材から取りこぼされて描画
+    されない。``footing._world_solid`` でワールド情報に変換し、平行四辺形の 4 頂点から
+    断面の中心軸の一端 ``(ox, oy, oz)``・軸単位ベクトル ``(ax, ay, az)``・幅(厚み)・
+    せい・中心軸長を導出する。以降は通常の横架材と同じ扱い(断面中心の配置点として
+    天端中央線へ持ち上げる)にできる。
+
+    Returns: ``(ox, oy, oz, ax, ay, az, width, height, length)``。``ox, oy, oz`` は
+        中心軸の一端のワールド座標(ストーリ相対 Z)。矩形断面(通常の横架材が
+        ``_get_profile_dims`` で処理する)・4 頂点でない断面(火打の footprint や
+        筋かいの 6 頂点など)・解釈不能な場合は None。
+    """
+    solid = _world_solid(element)
+    if solid is None:
+        return None
+    (origin, lx, ly, _lz), extrude, depth, pts, dims = solid
+    if dims is not None:
+        return None  # 矩形断面は通常経路(_get_profile_dims)が処理する
+    if len(pts) != 4:
+        return None  # 対象は平行四辺形(4 頂点)のみ。火打・筋かい等は除外する
+    us = [u for u, _v in pts]
+    vs = [v for _u, v in pts]
+    u_span = max(us) - min(us)
+    v_span = max(vs) - min(vs)
+    if u_span <= 0.0 or v_span <= 0.0:
+        return None
+    # 長さ軸 = プロファイル 2D で span の大きい座標。せい = もう一方の span。
+    # 幅(厚み)= 押し出し長。長辺(材の長さ方向)は長さ軸に沿う辺、端辺(直切り)は
+    # もう 1 対で、その中心が中心軸の両端になる。
+    length_is_u = u_span >= v_span
+    height = v_span if length_is_u else u_span
+
+    def along(edge: tuple[float, float]) -> float:
+        return abs(edge[0]) if length_is_u else abs(edge[1])
+
+    e0 = (pts[1][0] - pts[0][0], pts[1][1] - pts[0][1])
+    e1 = (pts[2][0] - pts[1][0], pts[2][1] - pts[1][1])
+    if along(e0) >= along(e1):
+        # 長辺 = 辺 0-1・2-3、端辺 = 辺 1-2・3-0
+        end_a = ((pts[1][0] + pts[2][0]) / 2.0, (pts[1][1] + pts[2][1]) / 2.0)
+        end_b = ((pts[3][0] + pts[0][0]) / 2.0, (pts[3][1] + pts[0][1]) / 2.0)
+    else:
+        # 長辺 = 辺 1-2・3-0、端辺 = 辺 0-1・2-3
+        end_a = ((pts[0][0] + pts[1][0]) / 2.0, (pts[0][1] + pts[1][1]) / 2.0)
+        end_b = ((pts[2][0] + pts[3][0]) / 2.0, (pts[2][1] + pts[3][1]) / 2.0)
+
+    half_w = depth / 2.0
+
+    def to_world(c: tuple[float, float]) -> tuple[float, float, float]:
+        base = _add(_add(origin, _scale(lx, c[0])), _scale(ly, c[1]))
+        return _add(base, _scale(extrude, half_w))  # 断面中心(厚みの中央)へ寄せる
+
+    ax_pt = to_world(end_a)
+    bx_pt = to_world(end_b)
+    axis = (bx_pt[0] - ax_pt[0], bx_pt[1] - ax_pt[1], bx_pt[2] - ax_pt[2])
+    length = math.sqrt(axis[0] ** 2 + axis[1] ** 2 + axis[2] ** 2)
+    if length <= 0.0:
+        return None
+    ax, ay, az = axis[0] / length, axis[1] / length, axis[2] / length
+    ox, oy, oz = ax_pt
+    return ox, oy, oz, ax, ay, az, depth, height, length
 
 
 def _get_material_name(element: ifcopenshell.entity_instance) -> str:
@@ -333,14 +417,25 @@ def build_member_commands(ifc_file: ifcopenshell.file) -> list[MemberCommand]:
                 placement = _get_placement_3d(element)
                 if placement is None:
                     continue
-                dims = _get_profile_dims(element)
-                if dims is None:
+
+                # 軸(押し出し方向)が鉛直な材は横架材でないためスキップ(火打等)。
+                # 断面種別(矩形/任意)より先に判定して火打を確実に除外する。
+                if math.hypot(placement[3], placement[4]) <= _VERTICAL_AXIS_TOL:
                     continue
 
-                ox, oy, oz, ax, ay, az = placement
-                width, height, length = dims
+                dims = _get_profile_dims(element)
+                if dims is not None:
+                    ox, oy, oz, ax, ay, az = placement
+                    width, height, length = dims
+                else:
+                    # 矩形断面で拾えない材は、登り梁等の傾斜梁(任意断面=平行四辺形の
+                    # 側面を厚み方向に押し出したソリッド)として中心軸を導出する。
+                    # 平行四辺形として解釈できない材(筋かいの 6 頂点等)はスキップ。
+                    sloped = _sloped_member_geometry(element)
+                    if sloped is None:
+                        continue
+                    ox, oy, oz, ax, ay, az, width, height, length = sloped
 
-                # 軸が鉛直な材は横架材でないためスキップ
                 horiz = math.hypot(ax, ay)
                 if horiz <= _VERTICAL_AXIS_TOL:
                     continue
@@ -393,6 +488,12 @@ def build_member_commands(ifc_file: ifcopenshell.file) -> list[MemberCommand]:
                 if member_class in (CLASS_MOYA, CLASS_MUNAGI):
                     element_layer_name = f'{prefix}-{LEVEL_MOYA}'
                     bound_level = LEVEL_MOYA
+                elif member_class == CLASS_NOBORIBARI:
+                    # 登り梁も母屋・棟木と同じスキームで専用レイヤ(n-登り梁)に分離する。
+                    # 母屋レベルと同じ絶対 Z(offset=column_offset)なので offset 算出は
+                    # 横架材と変わらず、傾斜は始端/終端の offset 差として表れる。
+                    element_layer_name = f'{prefix}-{LEVEL_NOBORIBARI}'
+                    bound_level = LEVEL_NOBORIBARI
                 else:
                     element_layer_name = layer_name
                     bound_level = layer_suffix

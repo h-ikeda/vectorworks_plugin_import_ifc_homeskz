@@ -201,6 +201,48 @@ class TestBuildMoyaSheetCommands:
         assert sheets[0]['viewport']['layers'] == [
             '2-垂木', '2-野地板', '1to3-柱', '2to3-柱', '2-柱伏図記号', '共通']
 
+    def test_moya_sheet_includes_noboribari_layer(self) -> None:
+        # 登り梁を含む階の母屋伏図には登り梁レイヤ(n-登り梁)を母屋と同じスキームで
+        # 母屋・垂木・野地板と併せて表示する。登り梁の無い階(主屋根)には出さない。
+        ifc = ifcopenshell.file()
+
+        def storey(
+            name: str, elev: float,
+            elems: list[tuple[str, float]] | None = None,
+        ) -> ifcopenshell.entity_instance:
+            s = ifc.create_entity('IfcBuildingStorey', Name=name, Elevation=elev)
+            if elems:
+                related = []
+                for t, z in elems:
+                    p = ifc.create_entity('IfcCartesianPoint', Coordinates=[0.0, 0.0, z])
+                    a = ifc.create_entity('IfcAxis2Placement3D', Location=p)
+                    lp = ifc.create_entity('IfcLocalPlacement', RelativePlacement=a)
+                    related.append(ifc.create_entity(t, ObjectPlacement=lp))
+                ifc.create_entity(
+                    'IfcRelContainedInSpatialStructure',
+                    RelatingStructure=s, RelatedElements=related)
+            return s
+
+        def add(s: ifcopenshell.entity_instance, entity: str, name: str) -> None:
+            e = ifc.create_entity(entity, Name=name)
+            ifc.create_entity(
+                'IfcRelContainedInSpatialStructure',
+                RelatingStructure=s, RelatedElements=[e])
+
+        storey('1FL', 473.0, [('IfcColumn', -48.0)])
+        second = storey('2FL', 3273.0, [('IfcSlab', -36.0)])
+        add(second, 'IfcSlab', '屋根版:1')       # 下屋根
+        add(second, 'IfcBeam', '木梁:登り梁:1_1')  # 下屋根の登り梁
+        roof = storey('RFL', 5973.0)
+        add(roof, 'IfcSlab', '屋根版:2')          # 主屋根(登り梁なし)
+
+        sheets = {s['title']: s['viewport']['layers']
+                  for s in sheet.build_moya_sheet_commands(ifc, columns=[])}
+        # 下屋根(2階)の母屋伏図に登り梁レイヤが載る(母屋は無いので登り梁・垂木・野地板)
+        assert '2-登り梁' in sheets['1階母屋伏図']
+        # 主屋根(屋根)は登り梁が無いため登り梁レイヤは出さない
+        assert not any(layer.endswith('-登り梁') for layer in sheets['2階母屋伏図'])
+
     def test_moya_sheet_column_cut_levels(self) -> None:
         # 母屋伏図の柱の切断レベルは「その階の床レベル + 0.75」。1階母屋伏図(i=1)は
         # 2.75、2階母屋伏図(i=2)は 3.75 を含む柱レイヤを表示する。3 階建てフィクスチャで
