@@ -77,10 +77,12 @@ from .story import (
     LEVEL_EAVES,
     LEVEL_FL,
     LEVEL_MOYA,
+    LEVEL_NOBORIBARI,
     LEVEL_NOJIITA,
     LEVEL_TARUKI,
     collect_stories,
     collect_story_moya_flags,
+    collect_story_noboribari_flags,
     collect_story_roof_flags,
     layer_prefix_for,
     plan_mark_layer_name,
@@ -344,6 +346,7 @@ def build_moya_sheet_commands(
     spans = collect_column_spans(columns)
     moya_flags = collect_story_moya_flags(ifc_file)
     roof_flags = collect_story_roof_flags(ifc_file)
+    noboribari_flags = collect_story_noboribari_flags(ifc_file)
     n = len(stories)
     # 番号の開始値: 基礎伏図(1)+各階柱梁伏図(ストーリ数)の次
     base_number = FLOOR_PLAN_START_NUMBER + n
@@ -359,6 +362,9 @@ def build_moya_sheet_commands(
         # 母屋は母屋がある階のみ(片流れ下屋等は母屋を持たず垂木・野地板だけ)。
         if is_top or moya_flags[i]:
             layers.append(f'{prefix}-{LEVEL_MOYA}')
+        # 登り梁も母屋と同じスキームで小屋組として母屋伏図に表示する(登り梁がある階のみ)。
+        if noboribari_flags[i]:
+            layers.append(f'{prefix}-{LEVEL_NOBORIBARI}')
         layers.append(f'{prefix}-{LEVEL_TARUKI}')
         layers.append(f'{prefix}-{LEVEL_NOJIITA}')
         # この伏図の切断レベル(その階の床レベル + 0.75)を span が含む柱レイヤを載せる。

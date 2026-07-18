@@ -13,9 +13,13 @@ from vectorworks_plugin_import_ifc_homeskz.ifc.member import (
     _get_material_name,
     _get_placement_3d,
     _get_profile_dims,
+    _sloped_member_geometry,
     build_member_commands,
     make_member_id,
     resolve_member_interferences,
+)
+from vectorworks_plugin_import_ifc_homeskz.ifc.structural_class import (
+    CLASS_NOBORIBARI,
 )
 
 
@@ -88,6 +92,96 @@ def make_beam(ifc: ifcopenshell.file, storey: ifcopenshell.entity_instance,
     ifc.create_entity(
         'IfcRelContainedInSpatialStructure', RelatingStructure=storey, RelatedElements=[beam]
     )
+    return beam
+
+
+def make_sloped_beam(
+    ifc: ifcopenshell.file, storey: ifcopenshell.entity_instance,
+    ox: float, oy: float, oz: float, theta: float,
+    length: float = 1000.0, height: float = 120.0, width: float = 90.0,
+    shear: float = 30.0, name: str | None = None, npts: int = 4,
+    elem_axis: tuple[float, float, float] | None = None,
+    transpose: bool = False, rotate: int = 0,
+) -> ifcopenshell.entity_instance:
+    """登り梁(傾斜梁)を模した IfcBeam を生成して storey に追加する。
+
+    ホームズ君 IFC の登り梁と同じく、材の側面(長さ×せいの平行四辺形。端部の
+    直切りを ``shear`` で表す)を ``IfcArbitraryClosedProfileDef`` として厚み方向へ
+    押し出したソリッドで表す。断面中心軸はワールドで ``theta`` の勾配(``+X`` 方向へ
+    ``cosθ``・``+Z`` 方向へ ``sinθ``)を持つ。
+
+    Parameters
+    ----------
+    ox, oy, oz : 要素ローカル配置の原点 (mm)
+    theta      : 中心軸の勾配 (rad)。0 で水平。
+    length     : 中心軸長 (mm)
+    height     : 断面のせい (プロファイル v 方向の幅, mm)
+    width      : 断面の幅 = 押し出し厚み (mm)
+    shear      : 端部直切りによるプロファイルのせん断量 (mm)
+    npts       : プロファイル頂点数。4=平行四辺形(登り梁)、6=登り梁でない形状
+                 (筋かい等、``_sloped_member_geometry`` が対象外にする)。
+    elem_axis  : 要素ローカル配置の Axis(押し出し方向)。鉛直(火打)を模す場合に
+                 ``(0, 0, 1)`` を渡すと横架材から除外される。
+    transpose  : プロファイルの (u, v) を入れ替える(長さ軸をプロファイル第 2 座標に
+                 する)。長さ軸判定の別枝(せい=第 1 座標の span)を検証するため。
+    rotate     : プロファイル頂点列を先頭から ``rotate`` 個ずらす(端辺が先頭に来る
+                 頂点順を作り、中心軸端の選択の別枝を検証するため)。
+    """
+    c, s = math.cos(theta), math.sin(theta)
+    pt = ifc.create_entity(
+        'IfcCartesianPoint', Coordinates=[float(ox), float(oy), float(oz)])
+    kw = {}
+    if elem_axis is not None:
+        kw['Axis'] = ifc.create_entity(
+            'IfcDirection', DirectionRatios=[float(a) for a in elem_axis])
+    ap = ifc.create_entity('IfcAxis2Placement3D', Location=pt, **kw)
+    lp = ifc.create_entity('IfcLocalPlacement', RelativePlacement=ap)
+
+    hh = height / 2.0
+    if npts == 4:
+        ring = [(0.0, -hh), (length, -hh), (length + shear, hh), (shear, hh)]
+    else:  # 平行四辺形でない断面 (6 頂点) は登り梁として扱わない
+        ring = [(0.0, -hh), (length, -hh), (length, 0.0),
+                (length + shear, hh), (shear, hh), (0.0, 0.0)]
+    if transpose:
+        ring = [(v, u) for u, v in ring]
+    if rotate:
+        rotate %= len(ring)
+        ring = ring[rotate:] + ring[:rotate]
+    coords = ring + [ring[0]]  # 閉じる
+    poly_pts = [ifc.create_entity('IfcCartesianPoint', Coordinates=[float(u), float(v)])
+                for u, v in coords]
+    poly = ifc.create_entity('IfcPolyline', Points=poly_pts)
+    profile = ifc.create_entity(
+        'IfcArbitraryClosedProfileDef', ProfileType='AREA', OuterCurve=poly)
+    # ソリッド配置: 局所 X(プロファイル u=長さ方向)を勾配方向、局所 Z(押し出し
+    # 方向=厚み)をワールド Y に向ける。
+    refdir = ifc.create_entity('IfcDirection', DirectionRatios=[c, 0.0, s])
+    zaxis = ifc.create_entity('IfcDirection', DirectionRatios=[0.0, 1.0, 0.0])
+    sol_pt = ifc.create_entity('IfcCartesianPoint', Coordinates=[0.0, 0.0, 0.0])
+    sol_pos = ifc.create_entity(
+        'IfcAxis2Placement3D', Location=sol_pt, Axis=zaxis, RefDirection=refdir)
+    extrude_dir = ifc.create_entity('IfcDirection', DirectionRatios=[0.0, 0.0, 1.0])
+    solid = ifc.create_entity(
+        'IfcExtrudedAreaSolid', SweptArea=profile, Position=sol_pos,
+        ExtrudedDirection=extrude_dir, Depth=float(width))
+
+    wcs_pt = ifc.create_entity('IfcCartesianPoint', Coordinates=[0.0, 0.0, 0.0])
+    wcs = ifc.create_entity('IfcAxis2Placement3D', Location=wcs_pt)
+    ctx = ifc.create_entity(
+        'IfcGeometricRepresentationContext', CoordinateSpaceDimension=3,
+        WorldCoordinateSystem=wcs)
+    shape_rep = ifc.create_entity(
+        'IfcShapeRepresentation', ContextOfItems=ctx,
+        RepresentationIdentifier='Body', RepresentationType='SweptSolid',
+        Items=[solid])
+    prod_def = ifc.create_entity(
+        'IfcProductDefinitionShape', Representations=[shape_rep])
+    beam = ifc.create_entity(
+        'IfcBeam', Name=name, ObjectPlacement=lp, Representation=prod_def)
+    ifc.create_entity(
+        'IfcRelContainedInSpatialStructure', RelatingStructure=storey,
+        RelatedElements=[beam])
     return beam
 
 
@@ -830,3 +924,133 @@ class TestResolveMemberInterferences:
         butting = _member([600.0, 500.0], [0.0, 500.0])
         result = resolve_member_interferences([primary, butting])
         assert json.loads(json.dumps(result)) == result
+
+
+# ---------------------------------------------------------------------------
+# 登り梁 (傾斜梁・任意断面) の解析
+# ---------------------------------------------------------------------------
+
+class TestSlopedMemberGeometry:
+    def test_derives_section_and_center_axis(self) -> None:
+        """平行四辺形の側面断面から幅・せい・中心軸長を導出する。"""
+        ifc = ifcopenshell.file()
+        storey = make_storey(ifc, '2FL', 3361.0)
+        theta = math.atan2(0.8, 0.6)  # cosθ=0.6, sinθ=0.8
+        beam = make_sloped_beam(
+            ifc, storey, 100.0, 200.0, 10.0, theta,
+            length=1000.0, height=120.0, width=90.0, shear=30.0)
+
+        result = _sloped_member_geometry(beam)
+        assert result is not None
+        _ox, _oy, _oz, ax, ay, az, width, height, length = result
+        assert width == pytest.approx(90.0)
+        assert height == pytest.approx(120.0)
+        assert length == pytest.approx(1000.0)
+        # 中心軸は勾配方向 (±0.6, 0, ±0.8) の単位ベクトル
+        assert math.hypot(ax, ay) == pytest.approx(0.6)
+        assert abs(az) == pytest.approx(0.8)
+
+    def test_derives_when_length_axis_is_second_profile_coord(self) -> None:
+        """長さ軸がプロファイル第 2 座標側でも幅・せい・長さを正しく導出する。"""
+        ifc = ifcopenshell.file()
+        storey = make_storey(ifc, '2FL', 3361.0)
+        beam = make_sloped_beam(
+            ifc, storey, 0.0, 0.0, 0.0, math.atan2(0.8, 0.6),
+            length=1000.0, height=120.0, width=90.0, shear=30.0, transpose=True)
+
+        result = _sloped_member_geometry(beam)
+        assert result is not None
+        _ox, _oy, _oz, _ax, _ay, _az, width, height, length = result
+        assert width == pytest.approx(90.0)
+        assert height == pytest.approx(120.0)
+        assert length == pytest.approx(1000.0)
+
+    def test_derives_when_vertex_order_starts_at_end_edge(self) -> None:
+        """端辺が頂点列の先頭でも中心軸の両端を正しく取る。"""
+        ifc = ifcopenshell.file()
+        storey = make_storey(ifc, '2FL', 3361.0)
+        beam = make_sloped_beam(
+            ifc, storey, 0.0, 0.0, 0.0, math.atan2(0.8, 0.6),
+            length=1000.0, height=120.0, width=90.0, shear=30.0, rotate=1)
+
+        result = _sloped_member_geometry(beam)
+        assert result is not None
+        _ox, _oy, _oz, _ax, _ay, _az, width, height, length = result
+        assert width == pytest.approx(90.0)
+        assert height == pytest.approx(120.0)
+        assert length == pytest.approx(1000.0)
+
+    def test_returns_none_for_rectangle_profile(self) -> None:
+        """矩形断面(通常の横架材)は None(通常経路が処理する)。"""
+        ifc = ifcopenshell.file()
+        storey = make_storey(ifc, '1FL', 473.0)
+        beam = make_beam(ifc, storey, 0.0, 0.0)
+        assert _sloped_member_geometry(beam) is None
+
+    def test_returns_none_for_six_point_profile(self) -> None:
+        """平行四辺形でない断面(6 頂点=筋かい等)は None。"""
+        ifc = ifcopenshell.file()
+        storey = make_storey(ifc, '2FL', 3361.0)
+        beam = make_sloped_beam(
+            ifc, storey, 0.0, 0.0, 0.0, math.atan2(0.8, 0.6), npts=6)
+        assert _sloped_member_geometry(beam) is None
+
+
+class TestBuildNoboribariCommands:
+    def test_noboribari_imported_to_dedicated_layer_with_slope(self) -> None:
+        """登り梁は専用レイヤ(n-登り梁)に断面・傾斜を保って取り込まれる。"""
+        ifc = ifcopenshell.file()
+        storey = make_storey(ifc, '1FL', 473.0)
+        make_storey(ifc, 'RFL', 5973.0)
+        theta = math.atan2(0.8, 0.6)
+        make_sloped_beam(
+            ifc, storey, 100.0, 200.0, 10.0, theta,
+            length=1000.0, height=120.0, width=90.0, shear=30.0,
+            name='木梁:登り梁:1_1')
+
+        commands = build_member_commands(ifc)
+        assert len(commands) == 1
+        command = commands[0]
+        assert command['class'] == CLASS_NOBORIBARI
+        assert command['layer'] == '1-登り梁'
+        assert command['member_id'] == '90×120'
+        # 傾斜: 始端・終端の天端 Z が異なり、差は sinθ×全長 = 0.8×1000 = 800
+        assert command['elevation'] != pytest.approx(command['end_elevation'])
+        assert abs(command['elevation'] - command['end_elevation']) == \
+            pytest.approx(800.0)
+        # 平面投影長 = cosθ×全長 = 0.6×1000 = 600
+        sx, sy = command['start']
+        ex, ey = command['end']
+        assert math.hypot(ex - sx, ey - sy) == pytest.approx(600.0)
+        # 高さ基準は登り梁レベル(母屋と同じスキーム)
+        assert command['start_bound']['level'] == '登り梁'
+        assert command['end_bound']['level'] == '登り梁'
+
+    def test_vertical_axis_beam_skipped(self) -> None:
+        """押し出し軸が鉛直な材(火打等)は横架材から除外する(登り梁経路も通さない)。"""
+        ifc = ifcopenshell.file()
+        storey = make_storey(ifc, 'RFL', 5973.0)
+        make_sloped_beam(
+            ifc, storey, 0.0, 0.0, 0.0, math.atan2(0.8, 0.6),
+            name='火打:1_1', elem_axis=(0.0, 0.0, 1.0))
+        assert build_member_commands(ifc) == []
+
+    def test_six_point_profile_beam_skipped(self) -> None:
+        """平行四辺形でない任意断面(筋かい等)は取り込まない。"""
+        ifc = ifcopenshell.file()
+        storey = make_storey(ifc, '2FL', 3361.0)
+        make_storey(ifc, 'RFL', 5973.0)
+        make_sloped_beam(
+            ifc, storey, 0.0, 0.0, 0.0, math.atan2(0.8, 0.6),
+            name='筋かい:1_1', npts=6)
+        assert build_member_commands(ifc) == []
+
+    def test_commands_are_json_serializable(self) -> None:
+        ifc = ifcopenshell.file()
+        storey = make_storey(ifc, '1FL', 473.0)
+        make_storey(ifc, 'RFL', 5973.0)
+        make_sloped_beam(
+            ifc, storey, 0.0, 0.0, 0.0, math.atan2(0.8, 0.6),
+            name='木梁:登り梁:1_1')
+        commands = build_member_commands(ifc)
+        assert json.loads(json.dumps(commands)) == commands

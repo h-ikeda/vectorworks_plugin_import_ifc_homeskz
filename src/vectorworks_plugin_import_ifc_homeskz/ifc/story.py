@@ -7,7 +7,12 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 from ..document import LevelCommand, StoryCommand
-from .structural_class import CLASS_MOYA, CLASS_MUNAGI, member_class_from_name
+from .structural_class import (
+    CLASS_MOYA,
+    CLASS_MUNAGI,
+    CLASS_NOBORIBARI,
+    member_class_from_name,
+)
 
 if TYPE_CHECKING:
     import ifcopenshell
@@ -76,6 +81,12 @@ LEVEL_TARUKI = '垂木'
 # よう垂木レイヤの直上に独立させて積む。高さは垂木(横架材天端/軒高)に揃える
 # (実描画の Z は屋根版由来の絶対値で屋根オブジェクトが持つためオフセットには依存しない)。
 LEVEL_NOJIITA = '野地板'
+# 登り梁(傾斜梁)を配置するレベル・レイヤ。登り梁は屋根の勾配に沿って架かる小屋組の
+# 梁で、母屋・棟木と同じく梁(小屋梁・軒桁)と重なって見にくいため専用レイヤ(n-登り梁)に
+# 分離する。母屋レイヤと同じく横架材天端(最上階は軒高)レイヤの直上に積む(母屋の直下)。
+# 高さは横架材天端(最上階は軒高)に揃える(実描画の Z は登り梁の傾斜した絶対値を要素が
+# 持つためレベルのオフセットには依存しない)。
+LEVEL_NOBORIBARI = '登り梁'
 STORY_ROOF = '屋根'
 
 # 基礎(立上り・底盤・アンカーボルト)用のストーリ・レベル・レイヤ
@@ -147,6 +158,24 @@ def story_has_moya(storey: ifcopenshell.entity_instance) -> bool:
     return False
 
 
+def story_has_noboribari(storey: ifcopenshell.entity_instance) -> bool:
+    """階に属する横架材の ``Name`` から登り梁(傾斜梁)を含むか判定する。
+
+    登り梁は屋根の勾配に沿って架かる小屋組の梁で、その階の IfcBeam/IfcMember の
+    ``Name`` が登り梁に対応するもの(``member_class_from_name`` が ``CLASS_NOBORIBARI``
+    を返すもの)として表れる。1 つでもあれば True を返す。この判定は横架材の描画側
+    (``ifc/member.py`` の登り梁レイヤ振り分け)が登り梁を専用レイヤ(``n-登り梁``)に
+    置く条件と一致させる必要がある。
+    """
+    for rel in storey.ContainsElements or ():
+        for element in rel.RelatedElements:
+            if not (element.is_a('IfcBeam') or element.is_a('IfcMember')):
+                continue
+            if member_class_from_name(element.Name) == CLASS_NOBORIBARI:
+                return True
+    return False
+
+
 def story_has_roof(storey: ifcopenshell.entity_instance) -> bool:
     """階に属する IfcSlab から屋根面(``屋根版``)を含むか判定する。
 
@@ -192,6 +221,22 @@ def collect_story_moya_flags(ifc_file: ifcopenshell.file) -> list[bool]:
     ]
     storeys.sort(key=lambda s: float(s.Elevation or 0.0))
     return [story_has_moya(s) for s in storeys]
+
+
+def collect_story_noboribari_flags(ifc_file: ifcopenshell.file) -> list[bool]:
+    """``collect_stories`` と同じ Elevation 昇順で、各階が登り梁を含むか返す。
+
+    各要素は ``story_has_noboribari`` による名前判定の結果。登り梁を含む階は登り梁
+    レイヤ(``n-登り梁``)を持ち、その階の母屋伏図に母屋・垂木・野地板と併せて表示する。
+    母屋・屋根版と異なり最上階(屋根)でも登り梁は常在ではないため、is_top では
+    保証せず名前判定の結果だけで持たせる(登り梁の無い階に空レイヤを作らない)。
+    """
+    storeys = [
+        s for s in ifc_file.by_type('IfcBuildingStorey')
+        if (s.Name or '').upper().endswith('FL')
+    ]
+    storeys.sort(key=lambda s: float(s.Elevation or 0.0))
+    return [story_has_noboribari(s) for s in storeys]
 
 
 def collect_stories(ifc_file: ifcopenshell.file) -> list[tuple[float, float | None]]:
@@ -265,6 +310,7 @@ def build_story_commands(
     stories = collect_stories(ifc_file)
     moya_flags = collect_story_moya_flags(ifc_file)
     roof_flags = collect_story_roof_flags(ifc_file)
+    noboribari_flags = collect_story_noboribari_flags(ifc_file)
     # 柱は span(またぐレベル区間)ごとの専用レイヤ ``{from}to{to}-柱`` に配置する。
     # 各ストーリに載せる span レイヤは実在する柱から決まるため、未指定なら遅延 import で
     # 組み立てる(story→column の循環 import を避けるため関数内 import)。
@@ -302,6 +348,13 @@ def build_story_commands(
         # に揃える(offset=column_offset。最上階は 0)ため実描画の高さは母屋・垂木・野地板の
         # 要素が持ち、この offset には依存しない。
         tail = len(levels) - 1  # FL(最上階は軒高)/横架材天端 の位置(この直前に挿入)
+        # 登り梁レイヤは登り梁を含む階(名前判定)にだけ持たせ、母屋の直下・横架材天端
+        # (最上階は軒高)の直上に積む(先に挿入するほど下段=横架材天端寄りになる)。
+        if noboribari_flags[i]:
+            levels.insert(
+                tail,
+                {'type': LEVEL_NOBORIBARI, 'offset': column_offset,
+                 'layer': f'{prefix}-{LEVEL_NOBORIBARI}'})
         if is_top or moya_flags[i]:
             levels.insert(
                 tail,

@@ -10,10 +10,12 @@ from vectorworks_plugin_import_ifc_homeskz.ifc.story import (
     build_story_commands,
     collect_stories,
     collect_story_moya_flags,
+    collect_story_noboribari_flags,
     collect_story_roof_flags,
     get_local_placement_z,
     resolve_beam_top_offset,
     story_has_moya,
+    story_has_noboribari,
     story_has_roof,
 )
 
@@ -191,6 +193,34 @@ class TestCollectStoryMoyaFlags:
         assert collect_story_moya_flags(ifc) == [False, True, True]
 
 
+class TestStoryHasNoboribari:
+    def test_true_when_noboribari_named_beam_present(self) -> None:
+        ifc = ifcopenshell.file()
+        storey = make_storey(ifc, '2FL', 3273.0)
+        add_named_beam(ifc, storey, '木梁:登り梁:1_1')
+        assert story_has_noboribari(storey) is True
+
+    def test_false_when_only_moya_and_ordinary_beams(self) -> None:
+        ifc = ifcopenshell.file()
+        storey = make_storey(ifc, '2FL', 3273.0)
+        add_named_beam(ifc, storey, '木梁:母屋:1_1')
+        add_named_beam(ifc, storey, '木梁:小屋梁:1_1')
+        assert story_has_noboribari(storey) is False
+
+
+class TestCollectStoryNoboribariFlags:
+    def test_flags_follow_elevation_order(self) -> None:
+        ifc = ifcopenshell.file()
+        # わざと逆順で作成
+        roof = make_storey(ifc, 'RFL', 5973.0)
+        make_storey(ifc, '1FL', 473.0, [('IfcColumn', -48.0)])
+        second = make_storey(ifc, '2FL', 3273.0, [('IfcSlab', -36.0)])
+        # 下屋根(2FL)にだけ登り梁があり、主屋根(RFL)には無い
+        add_named_beam(ifc, second, '木梁:登り梁:1_1')
+        add_named_beam(ifc, roof, '木梁:母屋:2_1')
+        assert collect_story_noboribari_flags(ifc) == [False, True, False]
+
+
 class TestStoryHasRoof:
     def test_true_when_roof_slab_present(self) -> None:
         ifc = ifcopenshell.file()
@@ -253,6 +283,39 @@ class TestBuildStoryCommands:
         # 母屋を持たない 1 階は FL と横架材天端のみ
         assert [lv['type'] for lv in commands[0]['levels']] == [
             'FL', '横架材天端']
+
+    def test_intermediate_story_with_noboribari_gets_noboribari_level(self) -> None:
+        """登り梁を含む中間階には 登り梁 レベルが母屋の直下・横架材天端の直上に入る。"""
+        ifc = ifcopenshell.file()
+        make_storey(ifc, '1FL', 473.0, [('IfcColumn', -48.0)])
+        second = make_storey(ifc, '2FL', 3273.0, [('IfcSlab', -36.0)])
+        add_named_beam(ifc, second, '木梁:母屋:1_1')
+        add_named_beam(ifc, second, '木梁:登り梁:1_1')
+        make_storey(ifc, 'RFL', 5973.0)
+
+        commands = build_story_commands(ifc)
+
+        # 登り梁は母屋と横架材天端の間に積む(母屋と同じスキーム。高さは横架材天端に揃える)
+        assert commands[1]['name'] == '2階'
+        assert commands[1]['levels'] == [
+            {'type': 'FL', 'offset': 0.0, 'layer': '2-FL'},
+            {'type': '母屋', 'offset': -36.0, 'layer': '2-母屋'},
+            {'type': '登り梁', 'offset': -36.0, 'layer': '2-登り梁'},
+            {'type': '横架材天端', 'offset': -36.0, 'layer': '2-横架材天端'},
+        ]
+
+    def test_noboribari_without_moya_still_gets_level(self) -> None:
+        """母屋の無い階でも登り梁があれば 登り梁 レベルを横架材天端の直上に持つ。"""
+        ifc = ifcopenshell.file()
+        make_storey(ifc, '1FL', 473.0, [('IfcColumn', -48.0)])
+        second = make_storey(ifc, '2FL', 3273.0, [('IfcSlab', -36.0)])
+        add_named_beam(ifc, second, '木梁:登り梁:1_1')
+        make_storey(ifc, 'RFL', 5973.0)
+
+        commands = build_story_commands(ifc)
+
+        assert [lv['type'] for lv in commands[1]['levels']] == [
+            'FL', '登り梁', '横架材天端']
 
     def test_builds_commands_for_three_stories(self) -> None:
         ifc = ifcopenshell.file()
