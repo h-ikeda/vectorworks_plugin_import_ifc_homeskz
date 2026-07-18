@@ -338,30 +338,22 @@
         ],
         "sections": [
             {
-                # 建物を鉛直面で切断する断面ビューポート(セクションビューポート)を
-                # 生成する命令。伏図(sheets)と同じくシートレイヤ + ビューポートだが、
-                # ビューは平面(伏図)ではなく切断線で定義した鉛直断面。切断線の平面
-                # 2 点(line_start / line_end)を結ぶ鉛直面で建物を切断し、look の側から
-                # 見た断面を描く(建物の中心を切る想定)。
-                "number": "6",              # シートレイヤ番号(伏図の後に続けて振る)
-                "title": "断面図",           # シートレイヤタイトル
-                "drawing_title": "断面図",    # ビューポートの図面タイトル
-                "drawing_number": "6",       # ビューポートの図番
-                "scale": 100.0,             # 縮尺 1:N の N(伏図と同じ 1:100)
-                # 切断線の平面 2 点 (mm・センタリング済み)。この 2 点を結ぶ鉛直面で
-                # 切断する(建物中心を Y 方向に走る線=X 一定なら X-中心の断面)。
+                # 軸組図の断面ビューポートを 1 枚割り当てる命令。断面ビューポートは
+                # VectorScript で新規作成できないため、あらかじめシートレイヤ "A"
+                # (タイトル 軸組図)に X1..X20・Y1..Y20 の 40 枚を用意しておき、
+                # その **断面指示線(Section Line2 PIO)とビューポートの位置・図番・
+                # タイトルだけを操作**する。柱と梁の両方が通る通り(柱梁の芯)を切断
+                # 位置とし、切断位置に応じた名前(通り芯名 / 中間通りは ' or 又)に
+                # 変更する。使わない分は描画フェーズで削除する。
+                "direction": "X",           # "X"=X通り(定 X・鉛直な指示線), "Y"=Y通り(定 Y・水平)
+                "source_number": "X1",       # 流用する既製の断面指示線/ビューポートの図番(X{k}/Y{k})
+                "drawing_number": "X1",      # 切断位置に応じた新しい図番(例 "X1" / "X1'" / "又い")
+                "drawing_title": "X1通り",    # 新しい図面タイトル(図番 + "通り")
+                # 断面指示線の平面 2 点 (mm・センタリング済み)。この 2 点を結ぶ線に
+                # 指示線を移動・回転する(X通りは鉛直=定 X、Y通りは水平=定 Y)。長さは
+                # 既製の指示線のまま(位置と向きだけ操作する)。
                 "line_start": [0.0, -9000.0],
-                "line_end": [0.0, 9000.0],
-                # 視線方向を示す第 3 点 (mm・センタリング済み)。切断線に直交し、
-                # 断面を見る側を指す(CreateSectionViewport の第 3 点)。
-                "look": [-1000.0, 0.0],
-                # 断面の見込み深さ (mm)。切断面から視線方向へこの距離まで見る。
-                "depth": 20000.0,
-                # 鉛直クリップ範囲(絶対 Z, mm)。start=下端(基礎下)・end=上端(屋根上)。
-                "start_height": -1000.0,
-                "end_height": 9000.0,
-                # シートレイヤ上のビューポート配置点 [x, y] (mm)。
-                "position": [0.0, 0.0]
+                "line_end": [0.0, 9000.0]
             }
         ],
         "tags": [
@@ -482,7 +474,7 @@ from __future__ import annotations
 import json
 from typing import Any, Optional, TypedDict
 
-DOCUMENT_VERSION = 35
+DOCUMENT_VERSION = 36
 
 
 class LevelCommand(TypedDict):
@@ -881,35 +873,36 @@ class SheetCommand(TypedDict):
 
 
 class SectionCommand(TypedDict):
-    """建物を鉛直面で切断する断面ビューポート(セクションビューポート)を生成する命令。
+    """軸組図の断面ビューポートを 1 枚割り当てる(既製の断面指示線を流用する)命令。
 
-    伏図(``SheetCommand``)と同じくシートレイヤ + ビューポートだが、ビューは平面
-    (伏図)ではなく **切断線で定義した鉛直断面**。``line_start`` / ``line_end`` の
-    平面 2 点(mm・センタリング済み)を結ぶ鉛直面で建物を切断し、``look``(切断線に
-    直交し、断面を見る側を指す第 3 点)の向きから見た断面を描く。切断面から視線方向へ
-    ``depth`` の距離まで、鉛直方向は ``start_height``〜``end_height``(絶対 Z, mm)の
-    範囲をクリップする。この 3 点 + 深さ + 高さ + シートレイヤは VectorWorks の
-    ``CreateSectionViewport(pt1, pt2, pt3, depth, startHeight, endHeight, vpLayer)`` に
-    そのまま渡す(建物中心を切る想定)。
+    断面ビューポートは VectorScript で新規作成できないため、あらかじめシートレイヤ
+    ``A``(タイトル 軸組図)に ``X1``..``X20`` / ``Y1``..``Y20`` の 40 枚を用意して
+    おき、その **断面指示線(``Section Line2`` PIO)とビューポートの位置・図番・
+    タイトルだけを操作**する(新規作成はしない)。柱と梁の両方が通る通り(柱梁の芯)を
+    切断位置とし、切断位置に応じた通りの名前に図番・タイトルを変更する。使わない分は
+    描画フェーズで削除し、残りをシートレイヤ上で重ならないように並べる。
 
-    ``number`` はシートレイヤ番号(伏図の後に続けて振る)、``title`` はシートレイヤ
-    タイトル、``drawing_title`` / ``drawing_number`` はビューポートの図面タイトル・図番、
-    ``scale`` は縮尺 1:N の N(伏図と同じ 1:100)、``position`` はシートレイヤ上の
-    ビューポート配置点 [x, y] (mm)。
+    - ``direction``: ``X``(X通り=定 X・鉛直な断面指示線)または ``Y``(Y通り=定 Y・
+      水平な断面指示線)。既製の指示線は全て水平なので、X通りは描画フェーズで 90 度
+      回転してから配置する。
+    - ``source_number``: 流用する既製の断面指示線/ビューポートの図番(``X{k}`` /
+      ``Y{k}``、切断位置の昇順に ``k``=1,2,… を割り当てる)。描画フェーズはこの図番で
+      既製の指示線を検索する。
+    - ``drawing_number``: 切断位置に応じた新しい図番。名前付き通り芯に一致すればその
+      名前(``X1`` / ``い``)、中間の通りは直前の通りに ``'`` を足す(``X1'`` / ``X1''``)か
+      ``又`` を前置する(``又い`` / ``又又い``)。
+    - ``drawing_title``: 新しい図面タイトル(``drawing_number`` + ``通り``)。
+    - ``line_start`` / ``line_end``: 断面指示線を移動・回転する平面 2 点(mm・
+      センタリング済み)。X通りは定 X の鉛直線、Y通りは定 Y の水平線。長さは既製の
+      指示線のまま(位置と向きだけ操作する)。
     """
 
-    number: str
-    title: str
-    drawing_title: str
+    direction: str
+    source_number: str
     drawing_number: str
-    scale: float
+    drawing_title: str
     line_start: list[float]
     line_end: list[float]
-    look: list[float]
-    depth: float
-    start_height: float
-    end_height: float
-    position: list[float]
 
 
 class TagCommand(TypedDict):
@@ -1409,13 +1402,12 @@ def _validate_sheet(index: int, command: Any) -> None:
 def _validate_section(index: int, command: Any) -> None:
     where = f'sections[{index}]'
     _require(isinstance(command, dict), f'{where} は dict である必要があります')
-    for key in ('number', 'title', 'drawing_title', 'drawing_number'):
+    _require(command.get('direction') in ('X', 'Y'),
+             f'{where}.direction は "X" または "Y" である必要があります')
+    for key in ('source_number', 'drawing_number', 'drawing_title'):
         _require(isinstance(command.get(key), str) and command[key],
                  f'{where}.{key} は非空文字列である必要があります')
-    for key in ('scale', 'depth', 'start_height', 'end_height'):
-        _require(_is_number(command.get(key)),
-                 f'{where}.{key} は数値である必要があります')
-    for key in ('line_start', 'line_end', 'look', 'position'):
+    for key in ('line_start', 'line_end'):
         _require(_is_point(command.get(key)),
                  f'{where}.{key} は [x, y] の数値ペアである必要があります')
 

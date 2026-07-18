@@ -90,10 +90,6 @@ def build_document(ifc_file: ifcopenshell.file) -> Document:
     # 使うため一度だけ組み立てる
     anchor_bolts = build_anchor_bolt_commands(ifc_file)
 
-    # 伏図(sheets)は断面図のシートレイヤ番号を伏図の後に続けて振るためにも参照する
-    # ので一度だけ組み立てる
-    sheets = build_sheet_commands(ifc_file, columns)
-
     return {
         'version': DOCUMENT_VERSION,
         'stories': stories,
@@ -116,11 +112,11 @@ def build_document(ifc_file: ifcopenshell.file) -> Document:
         # columns も渡す
         'joints': build_joint_commands(members, columns),
         # 伏図は各柱 span レイヤを切断レベルで絞って表示するため columns を渡す
-        'sheets': sheets,
-        # 断面図(建物中心を切る断面ビューポート)。平面の広がりは通り芯、鉛直の
-        # 広がりはストーリから導出する。シートレイヤ番号は伏図の後に続けて振るため
-        # sheets を渡す
-        'sections': build_section_commands(ifc_file, stories, sheets),
+        'sheets': build_sheet_commands(ifc_file, columns),
+        # 軸組図の断面ビューポート。柱と梁の両方が通る通り(柱梁の芯)を X・Y 方向
+        # それぞれ検出し、既製の断面指示線(X{k}/Y{k})を割り当てて切断位置へ移動・
+        # 改名する。柱梁の芯の検出に members・columns を渡す
+        'sections': build_section_commands(ifc_file, members, columns),
         'tags': build_tag_commands(members),
         # 断面記号は span 柱レイヤごとに置くため columns を渡す
         'column_marks': build_column_mark_commands(columns),

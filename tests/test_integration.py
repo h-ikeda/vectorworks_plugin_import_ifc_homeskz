@@ -332,7 +332,51 @@ def make_vs_mock() -> MagicMock:
     vs_mock.ClassNum.return_value = 0
     # 断面ビューポートの配置(GetBBox + HMove)用に BBox を 2 点で返す
     vs_mock.GetBBox.return_value = ((0.0, 0.0), (0.0, 0.0))
+    _install_premade_section_lines(vs_mock, null_handle, get_obj)
     return vs_mock
+
+
+def _install_premade_section_lines(
+    vs_mock: MagicMock, null_handle: object, get_obj: Any,
+) -> None:
+    """既製の断面指示線 X1..X20/Y1..Y20 をモデル化する(section フェーズ用)。
+
+    FInLayer/NextObj で 40 本を列挙し、GetRField で Drawing Number / Linked To を返し、
+    Linked To(``X1/A`` 等)を GetObject でビューポートハンドルに解決する。これにより
+    execute_sections が既製指示線を検索・移動・改名できる(各方向 20 枚まで)。
+    """
+    premade = {f'{d}{k}': object()
+               for d in ('X', 'Y') for k in range(1, 21)}
+    handles = list(premade.values())
+    handle_to_num = {h: n for n, h in premade.items()}
+
+    def f_in_layer(_layer_h: Any) -> Any:
+        return handles[0]
+
+    def next_obj(obj: Any) -> Any:
+        if obj in handle_to_num:
+            i = handles.index(obj)
+            return handles[i + 1] if i + 1 < len(handles) else null_handle
+        return null_handle
+
+    def get_rfield(h: Any, record: str, field: str) -> str:
+        if record == 'Section Line2' and h in handle_to_num:
+            if field == 'Drawing Number':
+                return handle_to_num[h]
+            if field == 'Linked To':
+                return f'{handle_to_num[h]}/A'
+        return ''
+
+    def get_obj_ext(name: str) -> Any:
+        h = get_obj(name)
+        if h is null_handle and isinstance(name, str) and name.endswith('/A'):
+            return ('VP', name)
+        return h
+
+    vs_mock.FInLayer.side_effect = f_in_layer
+    vs_mock.NextObj.side_effect = next_obj
+    vs_mock.GetRField.side_effect = get_rfield
+    vs_mock.GetObject.side_effect = get_obj_ext
 
 
 def run_execute_document(vs_mock: MagicMock, document: Document) -> dict[str, int]:

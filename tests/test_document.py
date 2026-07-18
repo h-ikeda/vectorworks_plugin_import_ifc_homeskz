@@ -155,13 +155,9 @@ def make_valid_document() -> dict[str, Any]:
         ],
         'sections': [
             {
-                'number': '6', 'title': '断面図',
-                'drawing_title': '断面図', 'drawing_number': '6',
-                'scale': 100.0,
+                'direction': 'X', 'source_number': 'X1',
+                'drawing_number': 'X1', 'drawing_title': 'X1通り',
                 'line_start': [0.0, -9000.0], 'line_end': [0.0, 9000.0],
-                'look': [-1000.0, 0.0], 'depth': 20000.0,
-                'start_height': -1000.0, 'end_height': 9000.0,
-                'position': [0.0, 0.0],
             },
         ],
         'tags': [

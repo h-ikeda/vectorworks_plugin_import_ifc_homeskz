@@ -1,4 +1,9 @@
-"""描画フェーズ (vw.section) のテスト。vs をモックし手書きの命令で検証する。"""
+"""描画フェーズ (vw.section) のテスト。vs をモックし手書きの命令で検証する。
+
+既製の断面指示線(Section Line2 PIO)X1/X2/Y1 とそのビューポートをモデル化し、
+execute_sections が指示線を検索・移動・回転・改名し、リンク先ビューポートを改名し、
+使わない分を削除し、残りを整列することを検証する。
+"""
 from __future__ import annotations
 
 import importlib
@@ -7,67 +12,71 @@ from unittest.mock import MagicMock, patch
 
 from vectorworks_plugin_import_ifc_homeskz.document import SectionCommand
 
-_NUMBER = '6'
-_TITLE = '断面図'
 
-
-def make_command() -> SectionCommand:
+def make_command(
+    direction: str, source: str, number: str,
+    line_start: list[float], line_end: list[float],
+) -> SectionCommand:
     return {
-        'number': _NUMBER,
-        'title': _TITLE,
-        'drawing_title': _TITLE,
-        'drawing_number': _NUMBER,
-        'scale': 100.0,
-        'line_start': [0.0, -9000.0],
-        'line_end': [0.0, 9000.0],
-        'look': [-1000.0, 0.0],
-        'depth': 20000.0,
-        'start_height': -1000.0,
-        'end_height': 9000.0,
-        'position': [0.0, 0.0],
+        'direction': direction,
+        'source_number': source,
+        'drawing_number': number,
+        'drawing_title': f'{number}通り',
+        'line_start': line_start,
+        'line_end': line_end,
     }
 
 
-def _handle(name: str) -> str:
-    return 'HANDLE_' + name
+def _make_vs_mock(premade_numbers: list[str]) -> MagicMock:
+    """既製の断面指示線群をモデル化した vs モック。
 
-
-def _make_vs_mock(
-    design_layers: list[str] | None = None,
-    sheet_exists: bool = False,
-    layer_creatable: bool = True,
-) -> MagicMock:
+    各図番に指示線ハンドル(タプル)を割り当て、FInLayer/NextObj で列挙、GetRField で
+    Drawing Number / Linked To を返し、GetObject でリンク先ビューポートを解決する。
+    """
     vs_mock = MagicMock()
     null_handle = object()
     vs_mock.Handle.return_value = null_handle
-    design_layers = design_layers or ['1-横架材天端', '共通']
-    layer_handles = [_handle(n) for n in design_layers]
+
+    lines = {num: ('LINE', num) for num in premade_numbers}
+    line_handles = list(lines.values())
+    handle_to_num = {h: n for n, h in lines.items()}
+    # 1 つのデザインレイヤに全指示線を置く
+    design_layer = 'LAYER'
 
     def f_layer() -> object:
-        return layer_handles[0] if layer_handles else null_handle
+        return design_layer
 
-    def next_layer(layer_h: Any) -> object:
-        if layer_h in layer_handles:
-            i = layer_handles.index(layer_h)
-            if i + 1 < len(layer_handles):
-                return layer_handles[i + 1]
+    def next_layer(_h: Any) -> object:
         return null_handle
 
-    def get_obj(name: str) -> object:
-        if sheet_exists and name == _NUMBER:
-            return _handle(name)
+    def f_in_layer(_layer_h: Any) -> Any:
+        return line_handles[0] if line_handles else null_handle
+
+    def next_obj(obj: Any) -> Any:
+        if obj in handle_to_num:
+            i = line_handles.index(obj)
+            return line_handles[i + 1] if i + 1 < len(line_handles) else null_handle
         return null_handle
 
-    def create_layer(name: str, layer_type: int) -> object:
-        return _handle(name) if layer_creatable else null_handle
+    def get_rfield(h: Any, record: str, field: str) -> str:
+        if record == 'Section Line2' and h in handle_to_num:
+            if field == 'Drawing Number':
+                return handle_to_num[h]
+            if field == 'Linked To':
+                return f'{handle_to_num[h]}/A'
+        return ''
+
+    def get_obj(name: str) -> Any:
+        if isinstance(name, str) and name.endswith('/A'):
+            return ('VP', name)
+        return null_handle
 
     vs_mock.FLayer.side_effect = f_layer
     vs_mock.NextLayer.side_effect = next_layer
+    vs_mock.FInLayer.side_effect = f_in_layer
+    vs_mock.NextObj.side_effect = next_obj
+    vs_mock.GetRField.side_effect = get_rfield
     vs_mock.GetObject.side_effect = get_obj
-    vs_mock.CreateLayer.side_effect = create_layer
-    vs_mock.ClassNum.return_value = 0
-    vs_mock.CreateSectionViewport.return_value = 'SECTION_VP'
-    vs_mock.CreateVP.return_value = 'FALLBACK_VP'
     vs_mock.GetBBox.return_value = ((0.0, 0.0), (0.0, 0.0))
     return vs_mock
 
@@ -80,72 +89,67 @@ def _load(vs_mock: MagicMock) -> Any:
 
 
 class TestExecuteSections:
-    def test_creates_sheet_layer_named_by_number_with_title(self) -> None:
-        vs_mock = _make_vs_mock()
+    def test_places_and_returns_count(self) -> None:
+        vs_mock = _make_vs_mock(['X1', 'X2', 'Y1'])
         vw_section = _load(vs_mock)
+        cmds = [
+            make_command('X', 'X1', 'X1', [-4000.0, -4000.0], [-4000.0, 4000.0]),
+            make_command('Y', 'Y1', 'い', [-5000.0, -3000.0], [5000.0, -3000.0]),
+        ]
+        assert vw_section.execute_sections(cmds) == 2
 
-        count = vw_section.execute_sections([make_command()])
-
-        assert count == 1
-        # シートレイヤ番号はレイヤ名が担う(プレゼンテーションレイヤ=種別 2)
-        vs_mock.CreateLayer.assert_called_once_with(_NUMBER, 2)
-        ov_calls = [c.args for c in vs_mock.SetObjectVariableString.call_args_list]
-        assert (_handle(_NUMBER), vw_section._OV_SHEET_TITLE, _TITLE) in ov_calls
-
-    def test_reuses_existing_sheet_layer(self) -> None:
-        vs_mock = _make_vs_mock(sheet_exists=True)
+    def test_empty_returns_zero_without_scan(self) -> None:
+        vs_mock = _make_vs_mock(['X1'])
         vw_section = _load(vs_mock)
-
-        vw_section.execute_sections([make_command()])
-
-        vs_mock.CreateLayer.assert_not_called()
-
-    def test_uses_create_section_viewport_with_line_geometry(self) -> None:
-        vs_mock = _make_vs_mock()
-        vw_section = _load(vs_mock)
-
-        vw_section.execute_sections([make_command()])
-
-        # 切断線 2 点・視線方向の第 3 点・深さ・鉛直クリップ・シートレイヤを渡す
-        vs_mock.CreateSectionViewport.assert_called_once_with(
-            (0.0, -9000.0), (0.0, 9000.0), (-1000.0, 0.0),
-            20000.0, -1000.0, 9000.0, _handle(_NUMBER))
-        # 側面ビューのフォールバックは使わない
-        vs_mock.CreateVP.assert_not_called()
-        # 縮尺・図面タイトル・図番を設定する
-        vs_mock.SetObjectVariableReal.assert_any_call(
-            'SECTION_VP', vw_section._OV_VP_SCALE, 100.0)
-        ov_calls = [c.args for c in vs_mock.SetObjectVariableString.call_args_list]
-        assert ('SECTION_VP', vw_section._OV_VP_DRAWING_TITLE, _TITLE) in ov_calls
-        assert ('SECTION_VP', vw_section._OV_VP_DRAWING_NUMBER, _NUMBER) in ov_calls
-        vs_mock.UpdateVP.assert_called_with('SECTION_VP')
-
-    def test_falls_back_to_elevation_view_when_function_missing(self) -> None:
-        vs_mock = _make_vs_mock()
-        # 断面関数が無い環境を再現する(MagicMock から属性を削除)
-        del vs_mock.CreateSectionViewport
-        vw_section = _load(vs_mock)
-
-        count = vw_section.execute_sections([make_command()])
-
-        assert count == 1
-        # 側面ビューを CreateVP + SetViewMatrix で作る
-        vs_mock.CreateVP.assert_called_once_with(_handle(_NUMBER))
-        # offX = -(切断線の最大 Y)=-9000、offZ = -(切断線の X)=0、回転 -90,-90,0
-        vs_mock.SetViewMatrix.assert_called_once_with(
-            'FALLBACK_VP', -9000.0, 0.0, -0.0, -90.0, -90.0, 0.0)
-
-    def test_skips_when_sheet_layer_cannot_be_created(self) -> None:
-        vs_mock = _make_vs_mock(layer_creatable=False)
-        vw_section = _load(vs_mock)
-
-        count = vw_section.execute_sections([make_command()])
-
-        assert count == 0
-        vs_mock.CreateSectionViewport.assert_not_called()
-
-    def test_empty_commands_return_zero(self) -> None:
-        vs_mock = _make_vs_mock()
-        vw_section = _load(vs_mock)
-
         assert vw_section.execute_sections([]) == 0
+        vs_mock.FInLayer.assert_not_called()
+
+    def test_x_line_rotated_y_not(self) -> None:
+        vs_mock = _make_vs_mock(['X1', 'Y1'])
+        vw_section = _load(vs_mock)
+        vw_section.execute_sections([
+            make_command('X', 'X1', 'X1', [-4000.0, -4000.0], [-4000.0, 4000.0]),
+            make_command('Y', 'Y1', 'い', [-5000.0, -3000.0], [5000.0, -3000.0]),
+        ])
+        # X通りは 90 度回転、Y通りは回転しない → HRotate は 1 回だけ
+        assert vs_mock.HRotate.call_count == 1
+        assert vs_mock.HRotate.call_args.args[2] == vw_section._ROTATE_X_DEG
+
+    def test_renames_line_and_viewport(self) -> None:
+        vs_mock = _make_vs_mock(['Y1'])
+        vw_section = _load(vs_mock)
+        vw_section.execute_sections([
+            make_command('Y', 'Y1', 'い', [-5000.0, -3000.0], [5000.0, -3000.0]),
+        ])
+        # 指示線の図番・タイトルを新しい通り名に変更する
+        rfield_calls = [c.args for c in vs_mock.SetRField.call_args_list]
+        assert (('LINE', 'Y1'), 'Section Line2', 'Drawing Number', 'い') in rfield_calls
+        assert (('LINE', 'Y1'), 'Section Line2', 'Drawing Title', 'い通り') in rfield_calls
+        # リンク先ビューポートの図番・図面タイトルも合わせる
+        ov_calls = [c.args for c in vs_mock.SetObjectVariableString.call_args_list]
+        assert (('VP', 'Y1/A'), vw_section._OV_VP_DRAWING_NUMBER, 'い') in ov_calls
+        assert (('VP', 'Y1/A'), vw_section._OV_VP_DRAWING_TITLE, 'い通り') in ov_calls
+
+    def test_deletes_unused_premade(self) -> None:
+        vs_mock = _make_vs_mock(['X1', 'X2', 'X3', 'Y1'])
+        vw_section = _load(vs_mock)
+        # X1 のみ使用 → X2, X3, Y1 の指示線とビューポートを削除する
+        vw_section.execute_sections([
+            make_command('X', 'X1', 'X1', [-4000.0, -4000.0], [-4000.0, 4000.0]),
+        ])
+        deleted = {c.args[0] for c in vs_mock.DelObject.call_args_list}
+        assert ('LINE', 'X2') in deleted
+        assert ('LINE', 'X3') in deleted
+        assert ('LINE', 'Y1') in deleted
+        assert ('VP', 'X2/A') in deleted
+        # 使用した X1 は削除しない
+        assert ('LINE', 'X1') not in deleted
+
+    def test_skips_missing_source(self) -> None:
+        vs_mock = _make_vs_mock(['X1'])
+        vw_section = _load(vs_mock)
+        # source X5 は存在しない → 配置 0
+        count = vw_section.execute_sections([
+            make_command('X', 'X5', 'X5', [0.0, -4000.0], [0.0, 4000.0]),
+        ])
+        assert count == 0
