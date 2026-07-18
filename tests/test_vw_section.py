@@ -104,16 +104,17 @@ class TestExecuteSections:
         assert vw_section.execute_sections([]) == 0
         vs_mock.FInLayer.assert_not_called()
 
-    def test_x_line_rotated_y_not(self) -> None:
+    def test_no_rotation(self) -> None:
         vs_mock = _make_vs_mock(['X1', 'Y1'])
         vw_section = _load(vs_mock)
         vw_section.execute_sections([
             make_command('X', 'X1', 'X1', [-4000.0, -4000.0], [-4000.0, 4000.0]),
             make_command('Y', 'Y1', 'い', [-5000.0, -3000.0], [5000.0, -3000.0]),
         ])
-        # X通りは 90 度回転、Y通りは回転しない → HRotate は 1 回だけ
-        assert vs_mock.HRotate.call_count == 1
-        assert vs_mock.HRotate.call_args.args[2] == vw_section._ROTATE_X_DEG
+        # 既製の指示線は方向別に正しい向きで用意されているため回転しない(移動のみ)
+        vs_mock.HRotate.assert_not_called()
+        # X通り・Y通りとも中点へ移動する(HMove は指示線移動 + 整列で複数回)
+        assert vs_mock.HMove.called
 
     def test_renames_line_and_viewport(self) -> None:
         vs_mock = _make_vs_mock(['Y1'])
