@@ -385,7 +385,10 @@ class TestExecuteSheetsWithLegends:
         vs_mock.Layer.assert_any_call('1')
         vs_mock.CreateCustomObjectN.assert_called_once_with(
             vw_sheet._GRAPHIC_LEGEND_PLUGIN, (0.0, 0.0), 0, False)
-        # PIO 本体を作図クラス(図中枠)に設定する
+        # グラフィック凡例 PIO は内部の枠線・セルをカレントクラスで作図するため、
+        # 作図クラス(図中枠)を NameClass でカレントクラスに切り替えてから作図し、
+        # 本体も SetClass で同じクラスに揃える
+        vs_mock.NameClass.assert_any_call('01作図-01線-07枠線-02図中枠')
         vs_mock.SetClass.assert_any_call(
             'LEGEND_HANDLE', '01作図-01線-07枠線-02図中枠')
         # ソース定義(シンボル + 基礎伏図ビューポートフィルタ)を持つプラグイン
@@ -427,6 +430,24 @@ class TestExecuteSheetsWithLegends:
         assert styles == {'基礎伏図凡例', '床伏図凡例'}
         assert vs_mock.UpdateStyledObjects.call_count == 2
         assert counters['legends'] == 2
+
+    def test_activates_legend_class_around_update_styled_objects(self) -> None:
+        # UpdateStyledObjects でのセル再計算でも枠線・セルはカレントクラスで作図
+        # されるため、各スタイルの作図クラス(図中枠)を NameClass でカレントクラスに
+        # 切り替えた**後**に UpdateStyledObjects を呼ぶ
+        vs_mock = _make_vs_mock(_TARGET_LAYERS)
+        vw_sheet = _load(vs_mock)
+
+        vw_sheet.execute_sheets([make_command()], legends=[make_legend()])
+
+        # mock_calls の並びで、図中枠クラスへの NameClass が UpdateStyledObjects より
+        # 前に来ることを確認する(切り替えてから再計算する)
+        names = [c[0] for c in vs_mock.mock_calls]
+        update_index = names.index('UpdateStyledObjects')
+        name_class_before = [
+            c for c in vs_mock.mock_calls[:update_index]
+            if c[0] == 'NameClass' and c.args == ('01作図-01線-07枠線-02図中枠',)]
+        assert name_class_before
 
     def test_legend_not_placed_on_non_matching_sheet(self) -> None:
         # シートレイヤ番号が一致しない凡例は載せない
