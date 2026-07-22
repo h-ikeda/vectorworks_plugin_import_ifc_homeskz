@@ -1224,3 +1224,202 @@ class TestBuildSkipsMalformedElements:
     def test_slab_top_elevation_none_when_base_slab_has_no_geometry(self) -> None:
         f = self._file_with_malformed_footings()
         assert footing.resolve_slab_top_elevation(f) is None
+
+
+def _wall_cmd(
+    x1: float, y1: float, x2: float, y2: float,
+    top_offset: float = -125.0, thickness: float = 150.0,
+) -> footing.WallCommand:
+    """テスト用の立上り(壁)命令。下端 GL(-100)・上端は横架材天端に top_offset。"""
+    return {
+        'layer': footing.LAYER_FOUNDATION_WALL,
+        'class': footing.CLASS_FOUNDATION_WALL,
+        'start': [x1, y1],
+        'end': [x2, y2],
+        'thickness': thickness,
+        'bottom_bound': {
+            'story_offset': 0, 'level': footing.LEVEL_GL, 'offset': -100.0},
+        'top_bound': {
+            'story_offset': 1, 'level': footing.LEVEL_BEAM_TOP,
+            'offset': top_offset},
+    }
+
+
+class TestCarveWallOpening:
+    """人通口の削り取り区間で立上りを分割/切り下げる純粋関数。"""
+
+    # 横架材天端の絶対 Z(top_bound.offset の基準)。壁天端は 425 + (-125) = 300。
+    _BEAM_TOP_ABS = 425.0
+    _SLAB_TOP = 50.0
+
+    def _wall(self) -> footing.WallCommand:
+        # X 方向に 0→2000 の壁(天端 300)。
+        return _wall_cmd(0.0, 0.0, 2000.0, 0.0)
+
+    def test_full_removal_splits_into_two_walls(self) -> None:
+        # 開口下端が底盤上端(50)なら立上りが生じず、区間を空けて両側だけ描く。
+        opening = footing._WallOpening(
+            start=(600.0, 0.0), end=(1200.0, 0.0), z_bottom=50.0, z_top=300.0)
+        segs = footing._carve_wall_opening(
+            self._wall(), opening, self._SLAB_TOP, self._BEAM_TOP_ABS)
+        assert len(segs) == 2
+        assert segs[0]['start'] == [0.0, 0.0]
+        assert segs[0]['end'] == [600.0, 0.0]
+        assert segs[1]['start'] == [1200.0, 0.0]
+        assert segs[1]['end'] == [2000.0, 0.0]
+        # 両側とも全高(元の天端 offset を保持)
+        assert segs[0]['top_bound']['offset'] == -125.0
+        assert segs[1]['top_bound']['offset'] == -125.0
+
+    def test_partial_opening_lowers_middle_segment(self) -> None:
+        # 開口下端が底盤上端より高い(200)なら、その区間だけ天端を 200 へ切り下げる。
+        opening = footing._WallOpening(
+            start=(600.0, 0.0), end=(1200.0, 0.0), z_bottom=200.0, z_top=300.0)
+        segs = footing._carve_wall_opening(
+            self._wall(), opening, self._SLAB_TOP, self._BEAM_TOP_ABS)
+        assert len(segs) == 3
+        left, mid, right = segs
+        assert left['end'] == [600.0, 0.0]
+        assert mid['start'] == [600.0, 0.0] and mid['end'] == [1200.0, 0.0]
+        assert right['start'] == [1200.0, 0.0]
+        # 中間だけ天端を切り下げ: offset = z_bottom - beam_top_abs = 200 - 425
+        assert mid['top_bound']['offset'] == 200.0 - 425.0
+        assert mid['top_bound']['level'] == footing.LEVEL_BEAM_TOP
+        # 両側は全高のまま
+        assert left['top_bound']['offset'] == -125.0
+        assert right['top_bound']['offset'] == -125.0
+
+    def test_full_removal_at_wall_end_drops_that_side(self) -> None:
+        # 開口が壁の終端に達する場合、終端側の区間は生じず片側だけになる。
+        opening = footing._WallOpening(
+            start=(1400.0, 0.0), end=(2000.0, 0.0), z_bottom=50.0, z_top=300.0)
+        segs = footing._carve_wall_opening(
+            self._wall(), opening, self._SLAB_TOP, self._BEAM_TOP_ABS)
+        assert len(segs) == 1
+        assert segs[0]['start'] == [0.0, 0.0]
+        assert segs[0]['end'] == [1400.0, 0.0]
+
+    def test_full_removal_of_entire_wall_yields_no_segment(self) -> None:
+        # 開口が壁全体を覆う(全高削り)なら立上りは残らない。
+        opening = footing._WallOpening(
+            start=(0.0, 0.0), end=(2000.0, 0.0), z_bottom=50.0, z_top=300.0)
+        segs = footing._carve_wall_opening(
+            self._wall(), opening, self._SLAB_TOP, self._BEAM_TOP_ABS)
+        assert segs == []
+
+    def test_opening_off_wall_is_ignored(self) -> None:
+        # 区間が壁からはみ出て重なり長さが極小なら元の壁のまま。
+        opening = footing._WallOpening(
+            start=(-500.0, 0.0), end=(-100.0, 0.0), z_bottom=50.0, z_top=300.0)
+        segs = footing._carve_wall_opening(
+            self._wall(), opening, self._SLAB_TOP, self._BEAM_TOP_ABS)
+        assert segs == [self._wall()]
+
+
+class TestFindOpeningWall:
+    def test_matches_collinear_wall_and_rejects_parallel_side_wall(self) -> None:
+        on_line = _wall_cmd(0.0, 0.0, 2000.0, 0.0)
+        side = _wall_cmd(0.0, 300.0, 2000.0, 300.0)      # 平行だが 300mm 離れた別線
+        crossing = _wall_cmd(500.0, -500.0, 500.0, 500.0)  # 直交
+        opening = footing._WallOpening(
+            start=(600.0, 0.0), end=(1200.0, 0.0), z_bottom=50.0, z_top=300.0)
+        walls = [side, crossing, on_line]
+        assert footing._find_opening_wall(walls, opening) == 2
+
+    def test_returns_none_when_no_wall_carries_opening(self) -> None:
+        opening = footing._WallOpening(
+            start=(600.0, 0.0), end=(1200.0, 0.0), z_bottom=50.0, z_top=300.0)
+        assert footing._find_opening_wall(
+            [_wall_cmd(0.0, 500.0, 2000.0, 500.0)], opening) is None
+
+
+class TestApplyWallOpenings:
+    def test_applies_each_opening_to_its_wall(self) -> None:
+        walls = [
+            _wall_cmd(0.0, 0.0, 2000.0, 0.0),
+            _wall_cmd(0.0, 1000.0, 2000.0, 1000.0),
+        ]
+        openings = [
+            footing._WallOpening((600.0, 0.0), (1200.0, 0.0), 50.0, 300.0),
+            footing._WallOpening((800.0, 1000.0), (1400.0, 1000.0), 50.0, 300.0),
+        ]
+        result = footing._apply_wall_openings(walls, openings, 50.0, 425.0)
+        # 2 本ともギャップで 2 分割 → 計 4 本
+        assert len(result) == 4
+        ys = sorted({w['start'][1] for w in result})
+        assert ys == [0.0, 1000.0]
+
+
+class TestCollectWallOpenings:
+    """人通口(差演算の削り取りソリッド)の抽出と判別。"""
+
+    def _oriented_wall_footing(
+        self, f: ifcopenshell.file, name: str,
+        items: list[ifcopenshell.entity_instance],
+    ) -> ifcopenshell.entity_instance:
+        # 壁を世界 X 方向に走らせる: 局所 Z=世界 X、局所 X=世界 Y(壁厚)、
+        # 局所 Y=世界 Z(壁背)。差演算の削り取りソリッドも同じ配置で水平押し出しになる。
+        pl = f.create_entity(
+            'IfcLocalPlacement',
+            RelativePlacement=_ax3(f, axis=(1.0, 0.0, 0.0), ref=(0.0, 1.0, 0.0)))
+        rep = f.create_entity('IfcShapeRepresentation', Items=items)
+        pds = f.create_entity('IfcProductDefinitionShape', Representations=[rep])
+        return f.create_entity(
+            'IfcFooting', GlobalId=ifcopenshell.guid.new(), Name=name,
+            ObjectPlacement=pl, Representation=pds)
+
+    def _hsolid(
+        self, f: ifcopenshell.file, height: float, length: float,
+        v_offset: float = 0.0,
+    ) -> ifcopenshell.entity_instance:
+        # 壁厚 150 × 背 height を局所 Z(=世界 X)へ length 押し出す。
+        # v_offset で断面を鉛直(世界 Z)にずらし、削り取りソリッドの Z 帯を作る。
+        rect = f.create_entity(
+            'IfcRectangleProfileDef', ProfileType='AREA',
+            Position=f.create_entity(
+                'IfcAxis2Placement2D', Location=_pt(f, 0.0, v_offset)),
+            XDim=150.0, YDim=height)
+        return f.create_entity(
+            'IfcExtrudedAreaSolid', SweptArea=rect, Position=_ax3(f),
+            ExtrudedDirection=_d(f, 0.0, 0.0, 1.0), Depth=length)
+
+    def test_extracts_person_opening_and_excludes_full_height_endcut(self) -> None:
+        f = _f()
+        # 素の立上り: 背 500、世界 Z ∈ [-250, 250](天端 250・底面 -250)。
+        base = self._hsolid(f, 500.0, 2000.0)
+        # 人通口: 背 250 を天端側(v_offset=+125)へ寄せ、Z ∈ [0, 250]。
+        # → 天端(250)まで届き、底面(-250)には届かない → 人通口。
+        person = self._hsolid(f, 250.0, 760.0, v_offset=125.0)
+        # 全高の端部削り: 背 500・オフセット無し → Z ∈ [-250, 250] → 人通口ではない。
+        endcut = self._hsolid(f, 500.0, 300.0)
+        diff1 = f.create_entity(
+            'IfcBooleanResult', Operator='DIFFERENCE',
+            FirstOperand=base, SecondOperand=person)
+        diff2 = f.create_entity(
+            'IfcBooleanResult', Operator='DIFFERENCE',
+            FirstOperand=diff1, SecondOperand=endcut)
+        self._oriented_wall_footing(f, '基礎梁:1', [diff2])
+        openings = footing._collect_wall_openings(f, 0.0, 0.0)
+        assert len(openings) == 1
+        op = openings[0]
+        assert math.isclose(op.z_bottom, 0.0, abs_tol=1e-6)
+        assert math.isclose(op.z_top, 250.0, abs_tol=1e-6)
+
+    def test_ignores_footings_without_voids(self) -> None:
+        f = _f()
+        self._oriented_wall_footing(f, '基礎梁:2', [self._hsolid(f, 500.0, 2000.0)])
+        assert footing._collect_wall_openings(f, 0.0, 0.0) == []
+
+
+class TestWallOpeningsFromFixtures:
+    """実フィクスチャの人通口が立上りを分割/切り下げる(件数が増える)。"""
+
+    def test_sample1_openings_split_walls(self) -> None:
+        f = load_fixture_ifc('サンプル1 (住木邸新築工事).ifc')
+        _lines, cx, cy = footing.resolve_lines(f)
+        openings = footing._collect_wall_openings(f, cx, cy)
+        assert len(openings) == 9
+        # すべて天端(400)まで届き、底面(-100)には届かない削り取り。
+        for op in openings:
+            assert op.z_top >= 400.0 - 1.0
+            assert op.z_bottom > -100.0 + 1.0

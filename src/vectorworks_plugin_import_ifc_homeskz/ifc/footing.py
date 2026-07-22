@@ -4,7 +4,14 @@
 
 - 立上り(基礎梁): ``Name`` が ``基礎梁`` で始まる IfcFooting。壁オブジェクト
   (wall 命令)にする。下端は基礎(自階)の GL、上端は 1 階(上階)の横架材天端に
-  バインドする。
+  バインドする。**立上りに設定された人通口**(人が通る開口)は、立上りソリッドの
+  天端から下方へ削り取った別ソリッド(``IfcBooleanResult`` の差演算の第 2 オペランド)
+  として表される。マージ・端部延長を済ませた立上りにこの削り取り区間を当てはめ、
+  開口の下端が底盤上端以下なら区間を空けて両側だけ描き(立上りが生じない)、それより
+  高ければその区間だけ天端を開口下端へ切り下げる(``_collect_wall_openings``・
+  ``_apply_wall_openings``)。端部が他材で削られた全高の差演算(``_base_extruded_solid``
+  が第 1 オペランドを辿って無視するもの)は人通口と誤認しないよう、天端まで届き底面
+  には届かない削りだけを人通口とみなす。
 - 底盤(基礎底盤・布基礎底盤・独立基礎底盤): ``Name`` に ``底盤`` を含む
   IfcSlab/IfcFooting。スラブオブジェクト(slab 命令)にする。天端を基礎の
   底盤天端レベルにバインドする。
@@ -26,7 +33,7 @@
 from __future__ import annotations
 
 import math
-from typing import TYPE_CHECKING, Optional
+from typing import TYPE_CHECKING, NamedTuple, Optional
 
 from ..document import (
     ColumnCommand,
@@ -108,6 +115,30 @@ _WALL_HEIGHT_TOL = _WALL_MERGE_DIST_TOL
 # 加える直交距離。
 _FREE_END_COLUMN_ALONG_TOL = 150.0
 _FREE_END_COLUMN_PERP_TOL = 20.0
+
+# 人通口(立上りに開けた人が通る開口)の適合許容値 (mm)。人通口は立上り
+# (基礎梁)のソリッドから IfcBooleanResult(差演算)で削り取られた別ソリッド
+# (第 2 オペランド)として表される。削り取った区間を最終的な立上り(マージ・
+# 端部延長済み)に当てはめる際の、開口が壁芯上に乗っているとみなす直交距離許容
+# ``_OPENING_MATCH_TOL`` と、区間の始端/残す最小長の許容 ``_OPENING_MIN_SEGMENT``。
+_OPENING_MATCH_TOL = 2.0
+_OPENING_MIN_SEGMENT = 1.0
+
+
+class _WallOpening(NamedTuple):
+    """立上りに設定された人通口の削り取り区間(センタリング済みの壁芯上の線分)。
+
+    ``start`` / ``end`` は人通口ソリッドの壁芯方向の両端(グリッド中心オフセット済み
+    の XY)。``z_bottom`` / ``z_top`` は削り取りソリッドのワールド絶対 Z の下端/上端。
+    人通口は立上りの天端から下方へ削り取られる(``z_top`` は立上り天端付近)ため、
+    ``z_bottom`` が削り残す立上りの新しい天端になる。``z_bottom`` が底盤上端以下なら
+    立上りは底盤上まで削られてその区間には立上りが生じない(両側だけ描く)。
+    """
+
+    start: tuple[float, float]
+    end: tuple[float, float]
+    z_bottom: float
+    z_top: float
 
 # 3 次元ベクトル(ワールド座標)
 _Vec = tuple[float, float, float]
@@ -222,6 +253,106 @@ def _first_extruded_solid(
     return None
 
 
+def _void_solids(item: ifcopenshell.entity_instance) -> list[
+        ifcopenshell.entity_instance]:
+    """表現アイテムの差演算(人通口)で削り取られる第 2 オペランドの列を返す。
+
+    人通口は立上りソリッドから ``IfcBooleanResult``(``.DIFFERENCE.``)/
+    ``IfcBooleanClippingResult`` で削り取られる。複数の人通口は
+    ``((base - void1) - void2)`` のように第 1 オペランドが入れ子の差演算になるため、
+    第 1 オペランドを辿りながら各差演算の第 2 オペランド(削り取りソリッド)を集める。
+    第 2 オペランドが IfcExtrudedAreaSolid のものだけを返す(それ以外は解析外)。
+    """
+    voids: list[ifcopenshell.entity_instance] = []
+    while item.is_a('IfcBooleanResult') or item.is_a('IfcBooleanClippingResult'):
+        is_diff = (item.is_a('IfcBooleanClippingResult')
+                   or getattr(item, 'Operator', None) == 'DIFFERENCE')
+        second = item.SecondOperand
+        if is_diff and second is not None and second.is_a('IfcExtrudedAreaSolid'):
+            voids.append(second)
+        item = item.FirstOperand
+    return voids
+
+
+def _element_void_solids(
+    element: ifcopenshell.entity_instance,
+) -> list[ifcopenshell.entity_instance]:
+    """要素の Body 表現に含まれる人通口(差演算の削り取りソリッド)の列を返す。"""
+    rep = getattr(element, 'Representation', None)
+    if rep is None:
+        return []
+    voids: list[ifcopenshell.entity_instance] = []
+    for shape_rep in rep.Representations:
+        for item in shape_rep.Items:
+            voids.extend(_void_solids(item))
+    return voids
+
+
+def _wall_opening_from_void(
+    element: ifcopenshell.entity_instance,
+    void: ifcopenshell.entity_instance,
+    center_x: float,
+    center_y: float,
+) -> _WallOpening | None:
+    """人通口の削り取りソリッドを立上り(壁芯)上の開口区間に変換する。
+
+    削り取りソリッドの配置原点を壁芯の一端、原点 + 押し出し方向 × 長さを他端とし
+    (立上りの壁芯を build_wall_commands が配置原点から取るのと同じ規約)、XY を
+    グリッド中心オフセットで補正する。Z 下端/上端は ``_z_top_and_thickness`` から
+    求める。押し出しが鉛直(壁芯が水平でない)なソリッドは立上りの人通口ではない
+    ため None を返す。
+    """
+    solid = _solid_world(element, void)
+    if solid is None:
+        return None
+    (origin, _lx, _ly, _lz), extrude, depth, _pts, _dims = solid
+    if abs(extrude[2]) > _VERTICAL_EXTRUDE_TOL:
+        return None
+    top, thickness = _z_top_and_thickness(solid)
+    start = (origin[0] - center_x, origin[1] - center_y)
+    end = (origin[0] + extrude[0] * depth - center_x,
+           origin[1] + extrude[1] * depth - center_y)
+    return _WallOpening(start=start, end=end,
+                        z_bottom=top - thickness, z_top=top)
+
+
+def _collect_wall_openings(
+    ifc_file: ifcopenshell.file, center_x: float, center_y: float,
+) -> list[_WallOpening]:
+    """立上り(基礎梁)に設定された人通口の削り取り区間をすべて集める。
+
+    人通口は立上りの**天端から下方へ**削り取られた開口として扱う。差演算の第 2
+    オペランドのうち、(1) 天端が立上り天端まで届き (``z_top`` ≥ 素の立上りの天端 −
+    許容)、(2) 下端が立上り底面まで届かない (``z_bottom`` > 素の立上りの底面 +
+    許容) ものだけを人通口とみなす。これにより、立上りの**端部が他材で削られた**
+    全高の差演算(``_base_extruded_solid`` が第 1 オペランドを辿って無視するもの)を
+    人通口と誤認して立上りを分割してしまうのを防ぐ。天端に届かない中間帯・底面まで
+    貫く全高の削りは表現できない/人通口ではないため除外する。
+    """
+    openings: list[_WallOpening] = []
+    for element in ifc_file.by_type('IfcFooting'):
+        if not _is_wall(element.Name or ''):
+            continue
+        voids = _element_void_solids(element)
+        if not voids:
+            continue
+        base = _world_solid(element)
+        if base is None:
+            continue
+        wall_top, wall_height = _z_top_and_thickness(base)
+        wall_bottom = wall_top - wall_height
+        for void in voids:
+            opening = _wall_opening_from_void(element, void, center_x, center_y)
+            if opening is None:
+                continue
+            if opening.z_top < wall_top - _WALL_MERGE_DIST_TOL:
+                continue
+            if opening.z_bottom <= wall_bottom + _WALL_MERGE_DIST_TOL:
+                continue
+            openings.append(opening)
+    return openings
+
+
 def _profile_points(
     area: ifcopenshell.entity_instance,
 ) -> tuple[list[tuple[float, float]], tuple[float, float] | None] | None:
@@ -250,15 +381,19 @@ def _profile_points(
     return None
 
 
-def _world_solid(element: ifcopenshell.entity_instance) -> _Solid | None:
-    """要素の押し出しソリッドをワールド座標の情報に変換する。
+def _solid_world(
+    element: ifcopenshell.entity_instance,
+    solid: ifcopenshell.entity_instance,
+) -> _Solid | None:
+    """要素配置上の押し出しソリッドをワールド座標の情報に変換する。
+
+    ``solid`` は要素の Body 表現に含まれる IfcExtrudedAreaSolid(素の立上りソリッド
+    のほか、人通口=差演算の第 2 オペランドの削り取りソリッドにも使う)。要素配置と
+    アイテム配置(``solid.Position``)を合成した行列で変換する。
 
     Returns: (配置, 押し出し方向(単位ベクトル), 押し出し長, プロファイル頂点列,
     矩形寸法 or None)。取得できなければ None。
     """
-    solid = _first_extruded_solid(element)
-    if solid is None:
-        return None
     placement = getattr(element, 'ObjectPlacement', None)
     if placement is None or placement.RelativePlacement is None:
         return None
@@ -276,6 +411,18 @@ def _world_solid(element: ifcopenshell.entity_instance) -> _Solid | None:
         return None
     pts, dims = parsed
     return pl, extrude, float(solid.Depth), pts, dims
+
+
+def _world_solid(element: ifcopenshell.entity_instance) -> _Solid | None:
+    """要素の押し出しソリッドをワールド座標の情報に変換する。
+
+    Returns: (配置, 押し出し方向(単位ベクトル), 押し出し長, プロファイル頂点列,
+    矩形寸法 or None)。取得できなければ None。
+    """
+    solid = _first_extruded_solid(element)
+    if solid is None:
+        return None
+    return _solid_world(element, solid)
 
 
 def _z_top_and_thickness(solid: _Solid) -> tuple[float, float]:
@@ -465,6 +612,12 @@ def build_wall_commands(
     ``build_document`` が組み立てた columns を渡す(未指定なら柱芯へ寄せず端点から
     半壁厚延長する。半島状の立上りの自由端が土台の半材せいぶん長くなるのを防ぐ
     ``_extend_free_wall_ends`` 参照)。
+
+    最後に ``_apply_wall_openings`` で人通口(立上りに開けた開口)の削り取り区間を
+    当てはめて立上りを分割/切り下げる。マージ・端部延長の**後**に当てはめるので、
+    開口を跨いで統合された立上りも開口位置で正しく分割され、開口境界の端は実寸法の
+    まま(延長しない)になる。開口下端が底盤上端以下なら区間を空けて両側だけ描き、
+    それより高ければその区間だけ天端を開口下端へ切り下げる。
     """
     storey = _first_fl_storey(ifc_file)
     if storey is None:
@@ -510,7 +663,18 @@ def build_wall_commands(
             'bottom_bound': bottom_bound,
             'top_bound': top_bound,
         })
-    return _extend_free_wall_ends(merge_wall_commands(commands), columns)
+    walls = _extend_free_wall_ends(merge_wall_commands(commands), columns)
+    # 人通口(立上りに開けた開口)の削り取り区間を、マージ・端部延長済みの立上りに
+    # 当てはめて分割/切り下げる。マージ後に当てはめるので、開口を跨いで統合された
+    # 立上りも開口位置で正しく分割される。開口境界の端は実寸法どおりで延長しない。
+    openings = _collect_wall_openings(ifc_file, center_x, center_y)
+    if openings:
+        slab_top = resolve_slab_top_elevation(ifc_file)
+        walls = _apply_wall_openings(
+            walls, openings,
+            slab_top if slab_top is not None else float('-inf'),
+            beam_top_abs)
+    return walls
 
 
 def _wall_section_key(wall: WallCommand) -> tuple[object, ...]:
@@ -815,6 +979,118 @@ def _extend_free_wall_ends(
             'top_bound': wall['top_bound'],
         })
     return extended
+
+
+def _find_opening_wall(
+    walls: list[WallCommand], opening: _WallOpening,
+) -> int | None:
+    """人通口の区間が乗っている立上りのインデックスを返す。無ければ None。
+
+    人通口は元は 1 本の基礎梁(IfcFooting)から削り取られるが、その基礎梁は
+    ``merge_wall_commands`` で同一直線上の他の立上りと 1 本に統合されている場合が
+    ある。統合後の立上りに対して、開口が(1)壁芯と平行で(2)壁芯線上(直交距離が
+    ``_OPENING_MATCH_TOL`` 以内)にあり(3)開口の中点が壁芯区間 [0, L] 内にある
+    ものを探す。側並び(直交距離が半壁厚ある平行壁)には乗らない。
+    """
+    ox, oy = opening.end[0] - opening.start[0], opening.end[1] - opening.start[1]
+    olen = math.hypot(ox, oy)
+    if olen <= 0.0:
+        return None
+    oux, ouy = ox / olen, oy / olen
+    mx = (opening.start[0] + opening.end[0]) / 2.0
+    my = (opening.start[1] + opening.end[1]) / 2.0
+    for i, wall in enumerate(walls):
+        x1, y1 = wall['start']
+        x2, y2 = wall['end']
+        length = math.hypot(x2 - x1, y2 - y1)
+        if length <= 0.0:
+            continue
+        ux, uy = (x2 - x1) / length, (y2 - y1) / length
+        if abs(ux * ouy - uy * oux) > _WALL_MERGE_ANGLE_TOL:
+            continue
+        perp = abs(ux * (my - y1) - uy * (mx - x1))
+        if perp > _OPENING_MATCH_TOL:
+            continue
+        t = ux * (mx - x1) + uy * (my - y1)
+        if t < -_OPENING_MATCH_TOL or t > length + _OPENING_MATCH_TOL:
+            continue
+        return i
+    return None
+
+
+def _carve_wall_opening(
+    wall: WallCommand, opening: _WallOpening,
+    slab_top: float, beam_top_abs: float,
+) -> list[WallCommand]:
+    """人通口の区間で立上りを分割/切り下げた立上りの列を返す。
+
+    人通口は立上りの天端から下方へ削り取られるため、削り残る立上りの天端は開口の
+    下端 (``z_bottom``) になる。開口の下端が底盤上端 (``slab_top``) 以下なら、その
+    区間の立上りは底盤上まで削られ立上りが生じない(中間区間を描かず両側だけ描く)。
+    それより高ければ、その区間だけ天端を ``z_bottom`` に切り下げた立上りを挟む。
+    端部の長さ補正はしない(人通口は実寸法でモデル化されているため、開口境界の端は
+    そのまま)。
+    """
+    x1, y1 = wall['start']
+    x2, y2 = wall['end']
+    length = math.hypot(x2 - x1, y2 - y1)
+    if length <= 0.0:
+        return [wall]
+    ux, uy = (x2 - x1) / length, (y2 - y1) / length
+    ta = ux * (opening.start[0] - x1) + uy * (opening.start[1] - y1)
+    tb = ux * (opening.end[0] - x1) + uy * (opening.end[1] - y1)
+    o0 = max(0.0, min(ta, tb))
+    o1 = min(length, max(ta, tb))
+    if o1 - o0 <= _OPENING_MIN_SEGMENT:
+        return [wall]
+
+    def segment(t0: float, t1: float,
+                top_bound: StoryBoundCommand) -> WallCommand:
+        return {
+            'layer': wall['layer'],
+            'class': wall['class'],
+            'start': [x1 + ux * t0, y1 + uy * t0],
+            'end': [x1 + ux * t1, y1 + uy * t1],
+            'thickness': wall['thickness'],
+            'bottom_bound': wall['bottom_bound'],
+            'top_bound': top_bound,
+        }
+
+    segments: list[WallCommand] = []
+    if o0 > _OPENING_MIN_SEGMENT:
+        segments.append(segment(0.0, o0, wall['top_bound']))
+    # 開口の下端が底盤上端より高ければ、その区間だけ天端を切り下げた立上りを挟む。
+    if opening.z_bottom > slab_top + _WALL_MERGE_DIST_TOL:
+        lowered: StoryBoundCommand = {
+            'story_offset': wall['top_bound']['story_offset'],
+            'level': wall['top_bound']['level'],
+            'offset': opening.z_bottom - beam_top_abs,
+        }
+        segments.append(segment(o0, o1, lowered))
+    if length - o1 > _OPENING_MIN_SEGMENT:
+        segments.append(segment(o1, length, wall['top_bound']))
+    return segments
+
+
+def _apply_wall_openings(
+    walls: list[WallCommand], openings: list[_WallOpening],
+    slab_top: float, beam_top_abs: float,
+) -> list[WallCommand]:
+    """人通口をマージ・延長済みの立上りに当てはめて分割/切り下げる。
+
+    各開口が乗っている立上りを探し、``_carve_wall_opening`` で分割/切り下げた列に
+    置き換える。1 本の立上りに複数の開口がある場合も、更新後のリストに対して順に
+    当てはめるため正しく処理される。乗る立上りが見つからない開口は無視する。判定は
+    入力順に対して決定的。
+    """
+    result = list(walls)
+    for opening in openings:
+        idx = _find_opening_wall(result, opening)
+        if idx is None:
+            continue
+        result[idx:idx + 1] = _carve_wall_opening(
+            result[idx], opening, slab_top, beam_top_abs)
+    return result
 
 
 def _line_dir(wall: WallCommand) -> tuple[float, float, float]:
