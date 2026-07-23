@@ -139,6 +139,16 @@ class TestBuildFromFixture:
             assert wall['bottom_bound']['story_offset'] == 0
             assert wall['top_bound']['level'] == '横架材天端'
             assert wall['top_bound']['story_offset'] == 1
+            # 配筋(上端主筋・下端主筋・縦筋)が入る(既定でも非空)
+            reinf = wall['reinforcement']
+            assert reinf['top'] and reinf['bottom'] and reinf['vertical']
+
+    def test_slab_commands_carry_reinforcement(self) -> None:
+        ifc = _open(self.FILENAME)
+        for slab in footing.build_slab_commands(ifc):
+            reinf = slab['reinforcement']
+            # X 方向・Y 方向の配筋が入る(既定でも非空)
+            assert reinf['x'] and reinf['y']
 
     def test_wall_bottom_bites_into_slab(self) -> None:
         # 立上りの下端は底盤の底面(底盤天端 − 底盤厚)より _SLAB_BITE だけ下げて
@@ -201,16 +211,17 @@ class TestBuildFromFixture:
         assert any(s['modifiers'] for s in slabs)
 
     def test_continuous_base_slabs_are_merged(self) -> None:
-        # 連続する同厚の基礎底盤(ベタ基礎)は 1 枚に統合される。伏図次郎は
-        # offset=0 の底盤 12 枚が 1 枚の L 字ポリゴンに、独立基礎底盤(offset≠0)は
-        # そのまま残る。統合後は同一グループに連続する矩形ペアが残らない。
+        # 連続する同厚・同高・同配筋の基礎底盤(ベタ基礎)は 1 枚に統合される。
+        # 伏図次郎は offset=0・配筋 D13@300 の連続底盤が 1 枚の多角形に統合され、
+        # 配筋の異なる底盤(D13@175/@200)は別枚として残り、独立基礎底盤
+        # (offset≠0)も別高さで残る。統合後は同一グループに連続する矩形ペアが
+        # 残らない。配筋を統合キーに含めるため、配筋の違う底盤は 1 枚に潰れない。
         ifc = _open(self.FILENAME)
         slabs = footing.build_slab_commands(ifc)
         base = [s for s in slabs if s['thickness'] is not None]
-        # 12 枚の連続底盤 → 1 枚。独立基礎底盤は別高さ(別グループ)で残る。
-        assert len(base) == 2
+        assert len(base) == 3
         merged = max(base, key=lambda s: len(s['boundary']))
-        assert len(merged['boundary']) > 4  # L 字(6 頂点)
+        assert len(merged['boundary']) > 4  # 統合された多角形(4 頂点超)
 
     def test_base_slab_outer_boundary_matches_wall_outer_face(self) -> None:
         # 底盤外形は立上りの壁心にあるため、外面(壁心 + 半壁厚)まで広がる。
@@ -450,6 +461,7 @@ def _slab(
         'thickness': thickness,
         'bound': {
             'story_offset': 0, 'level': footing.LEVEL_SLAB_TOP, 'offset': offset},
+        'reinforcement': {'x': 'D13@200', 'y': 'D13@200'},
         'modifiers': [],
     }
 
@@ -655,6 +667,8 @@ def _wall(
             'story_offset': 0, 'level': footing.LEVEL_GL, 'offset': bottom_offset},
         'top_bound': {
             'story_offset': 1, 'level': footing.LEVEL_BEAM_TOP, 'offset': top_offset},
+        'reinforcement': {'top': '1-D13', 'bottom': '1-D13',
+                          'vertical': '1-D10@250'},
     }
 
 
@@ -1260,6 +1274,8 @@ def _wall_cmd(
         'top_bound': {
             'story_offset': 1, 'level': footing.LEVEL_BEAM_TOP,
             'offset': top_offset},
+        'reinforcement': {'top': '1-D13', 'bottom': '1-D13',
+                          'vertical': '1-D10@250'},
     }
 
 

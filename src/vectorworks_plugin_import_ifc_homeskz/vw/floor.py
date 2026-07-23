@@ -28,7 +28,7 @@ def _set_all_attributes_by_class(obj: Any) -> None:
 
     ``SetClass`` はクラスを割り当てるだけで各描画属性は by-instance の既定値のまま残る
     ため、属性ごとの by-class 設定関数を個別に呼ぶ(``vw/column_mark.py``・
-    ``vw/rebar.py`` と同じ規約)。
+    ``vw/column_mark.py`` と同じ規約)。
     """
     vs.SetPenColorByClass(obj)
     vs.SetFillColorByClass(obj)

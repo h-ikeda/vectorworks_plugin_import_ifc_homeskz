@@ -217,19 +217,19 @@ class TestExecuteSheets:
             assert ('VP_HANDLE', name, vw_sheet._VP_CLASS_VISIBLE) in cls_calls
 
     def test_hides_named_classes(self) -> None:
-        rebar = '04構造-01基礎-09鉄筋'
-        classes = ['なし', '04構造-01基礎-03立ち上がり', rebar]
+        hidden = '01作図-04記号-04構造-一般'
+        classes = ['なし', '04構造-01基礎-03立ち上がり', hidden]
         vs_mock = _make_vs_mock(_TARGET_LAYERS, classes=classes)
         vw_sheet = _load(vs_mock)
 
         command = make_command()
-        command['viewport']['hidden_classes'] = [rebar]
+        command['viewport']['hidden_classes'] = [hidden]
         vw_sheet.execute_sheets([command])
 
         cls_calls = [c.args for c in vs_mock.SetVPClassVisibility.call_args_list]
-        # hidden_classes に挙げた配筋クラスは非表示 (1) にする
-        assert ('VP_HANDLE', rebar, vw_sheet._VP_CLASS_HIDDEN) in cls_calls
-        assert ('VP_HANDLE', rebar, vw_sheet._VP_CLASS_VISIBLE) not in cls_calls
+        # hidden_classes に挙げたクラスは非表示 (1) にする
+        assert ('VP_HANDLE', hidden, vw_sheet._VP_CLASS_HIDDEN) in cls_calls
+        assert ('VP_HANDLE', hidden, vw_sheet._VP_CLASS_VISIBLE) not in cls_calls
         # それ以外のクラスは従来どおり表示 (0)
         for name in ['なし', '04構造-01基礎-03立ち上がり']:
             assert ('VP_HANDLE', name, vw_sheet._VP_CLASS_VISIBLE) in cls_calls

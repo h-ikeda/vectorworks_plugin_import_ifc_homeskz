@@ -18,6 +18,8 @@ def make_wall_command() -> WallCommand:
         'start': [0.0, 0.0], 'end': [3000.0, 0.0], 'thickness': 120.0,
         'bottom_bound': {'story_offset': 0, 'level': 'GL', 'offset': -100.0},
         'top_bound': {'story_offset': 1, 'level': '横架材天端', 'offset': -190.0},
+        'reinforcement': {'top': '1-D13', 'bottom': '2-D13',
+                          'vertical': '1-D10@300'},
     }
 
 
@@ -33,6 +35,7 @@ def make_slab_command() -> SlabCommand:
         'boundary': [[0.0, 0.0], [3000.0, 0.0], [3000.0, 2000.0], [0.0, 2000.0]],
         'elevation': 50.0, 'thickness': 150.0,
         'bound': {'story_offset': 0, 'level': '底盤天端', 'offset': 0.0},
+        'reinforcement': {'x': 'D13@200', 'y': 'D13@175'},
         'modifiers': [],
     }
 
@@ -146,6 +149,35 @@ class TestExecuteWalls:
         #  topLevel, topOffset)
         assert args[1:] == (2, 0, 'GL', -100.0, 2, 1, '横架材天端', -190.0)
 
+    def test_attaches_reinforcement_record(self) -> None:
+        vs_mock = _make_vs_mock({'F-立上り'})
+        vw_footing = _load(vs_mock)
+
+        vw_footing.execute_walls([make_wall_command()])
+
+        # 配筋レコード ``配筋`` が無ければ全フィールド付きで作成する
+        new_fields = [c.args[:2] for c in vs_mock.NewField.call_args_list]
+        assert ('配筋', '上端主筋') in new_fields
+        assert ('配筋', '縦筋') in new_fields
+        assert ('配筋', 'X方向') in new_fields
+        # 壁にレコードを関連付け、立上りのフィールド(上端主筋・下端主筋・縦筋)を設定する
+        vs_mock.SetRecord.assert_any_call(vs_mock.LNewObj.return_value, '配筋')
+        rfield = [c.args for c in vs_mock.SetRField.call_args_list]
+        obj = vs_mock.LNewObj.return_value
+        assert (obj, '配筋', '上端主筋', '1-D13') in rfield
+        assert (obj, '配筋', '下端主筋', '2-D13') in rfield
+        assert (obj, '配筋', '縦筋', '1-D10@300') in rfield
+
+    def test_reuses_existing_reinforcement_record(self) -> None:
+        # 既に ``配筋`` レコードが存在する場合は NewField を呼ばない
+        vs_mock = _make_vs_mock({'F-立上り', '配筋'})
+        vw_footing = _load(vs_mock)
+
+        vw_footing.execute_walls([make_wall_command()])
+
+        vs_mock.NewField.assert_not_called()
+        vs_mock.SetRecord.assert_any_call(vs_mock.LNewObj.return_value, '配筋')
+
     def test_skips_when_layer_missing(self) -> None:
         vs_mock = _make_vs_mock(set())
         vw_footing = _load(vs_mock)
@@ -248,6 +280,20 @@ class TestExecuteSlabs:
         # 外形の頂点数分 LineTo (始点は MoveTo)
         assert vs_mock.MoveTo.call_count == 1
         assert vs_mock.LineTo.call_count == 3
+
+    def test_attaches_reinforcement_record(self) -> None:
+        vs_mock = _make_vs_mock({'F-底盤'})
+        vw_footing = _load(vs_mock)
+
+        vw_footing.execute_slabs([make_slab_command()])
+
+        slab = vs_mock.CreateSlab.return_value
+        vs_mock.SetRecord.assert_any_call(slab, '配筋')
+        rfield = [c.args for c in vs_mock.SetRField.call_args_list]
+        # 底盤は X 方向・Y 方向のフィールドを設定する(立上りのフィールドは触らない)
+        assert (slab, '配筋', 'X方向', 'D13@200') in rfield
+        assert (slab, '配筋', 'Y方向', 'D13@175') in rfield
+        assert not any(a[:3] == (slab, '配筋', '上端主筋') for a in rfield)
 
     def test_skips_when_layer_missing(self) -> None:
         vs_mock = _make_vs_mock(set())

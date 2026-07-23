@@ -140,6 +140,6 @@ class TestBuildSectionCommands:
             'slabs': [], 'floors': [], 'anchor_bolts': [], 'floor_posts': [],
             'fire_braces': [], 'joints': [], 'sheets': [],
             'sections': cmds, 'tags': [], 'column_marks': [],
-            'legends': [], 'rebars': [],
+            'legends': [],
         }
         validate_document(document)

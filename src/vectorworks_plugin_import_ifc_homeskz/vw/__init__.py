@@ -21,7 +21,6 @@ from .grid import execute_grids
 from .joint import execute_joints
 from .member import execute_members
 from .rafter import execute_rafters
-from .rebar import execute_rebars
 from .roof import execute_roofs
 from .section import execute_sections
 from .sheet import execute_sheets
@@ -30,7 +29,7 @@ from .story import execute_stories, reorder_story_layers
 __all__ = ['execute_anchor_bolts', 'execute_column_marks', 'execute_columns',
            'execute_document', 'execute_fire_braces', 'execute_floor_posts',
            'execute_floors', 'execute_grids', 'execute_joints',
-           'execute_members', 'execute_rafters', 'execute_rebars',
+           'execute_members', 'execute_rafters',
            'execute_roofs', 'execute_sections', 'execute_sheets',
            'execute_slabs', 'execute_stories', 'execute_wall_joins',
            'execute_walls', 'reorder_story_layers']
@@ -54,13 +53,13 @@ def execute_document(document: Any) -> dict[str, int]:
     立上りをすべて配置した直後に実行する。
 
     Returns: {'stories', 'grids', 'members', 'rafters', 'roofs', 'columns',
-        'walls', 'wall_joins', 'slabs', 'floors', 'rebars', 'anchor_bolts',
+        'walls', 'wall_joins', 'slabs', 'floors', 'anchor_bolts',
         'floor_posts', 'fire_braces', 'joints', 'column_marks', 'sheets',
         'tags', 'legends', 'sections'}
         各命令の実行数。rafters は屋根版から導出した垂木(軸組)数、roofs は
         屋根版から導出した野地板(屋根オブジェクト)数、wall_joins は
         交差する立上りを結合した回数、slabs は底盤・地中梁数、floors は各階 FL
-        レイヤに配置した床板(床)数、rebars は基礎に配置した配筋 PIO(鉄筋)数、
+        レイヤに配置した床板(床)数、
         floor_posts は大引下に配置した床束シンボル数、fire_braces は
         横架材レイヤに配置した火打シンボル数、joints は受ける材のある横架材端部に
         配置した仕口シンボル数、column_marks は下階柱レイヤに配置した
@@ -102,9 +101,6 @@ def execute_document(document: Any) -> dict[str, int]:
     # 床板(床ツール)は各階の FL レイヤに配置する
     trace('execute_floors start')
     counts['floors'] = execute_floors(validated['floors'])
-    # 基礎の配筋(鉄筋 PIO)は立上り・底盤と同じレイヤに重ねる
-    trace('execute_rebars start')
-    counts['rebars'] = execute_rebars(validated['rebars'])
     trace('execute_anchor_bolts start')
     counts['anchor_bolts'] = execute_anchor_bolts(validated['anchor_bolts'])
     trace('execute_floor_posts start')

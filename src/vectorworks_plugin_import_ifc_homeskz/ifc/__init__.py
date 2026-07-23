@@ -27,7 +27,6 @@ from .loader import open_ifc
 from .member import build_member_commands
 from .noboribari import correct_noboribari
 from .rafter import build_rafter_commands
-from .rebar import build_rebar_commands
 from .roof import build_roof_commands
 from .section import build_section_commands
 from .sheet import (
@@ -51,7 +50,7 @@ __all__ = ['build_anchor_bolt_commands', 'build_column_commands',
            'build_legend_commands',
            'build_member_commands', 'correct_noboribari',
            'build_rafter_commands',
-           'build_rebar_commands', 'build_roof_commands',
+           'build_roof_commands',
            'build_section_commands',
            'build_sheet_commands', 'build_slab_commands',
            'build_story_commands', 'build_tag_commands', 'build_wall_commands',
@@ -127,5 +126,4 @@ def build_document(ifc_file: ifcopenshell.file) -> Document:
             *build_legend_commands(ifc_file, anchor_bolts),
             *build_floor_legend_commands(ifc_file, columns),
         ],
-        'rebars': build_rebar_commands(ifc_file),
     }

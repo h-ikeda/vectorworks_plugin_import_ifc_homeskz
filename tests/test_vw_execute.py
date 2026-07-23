@@ -235,7 +235,9 @@ def make_document() -> dict[str, Any]:
             {'layer': 'F-立上り', 'class': '04構造-01基礎-03立ち上がり',
              'start': [0.0, 0.0], 'end': [3000.0, 0.0], 'thickness': 120.0,
              'bottom_bound': {'story_offset': 0, 'level': 'GL', 'offset': -100.0},
-             'top_bound': {'story_offset': 1, 'level': '横架材天端', 'offset': -190.0}},
+             'top_bound': {'story_offset': 1, 'level': '横架材天端', 'offset': -190.0},
+             'reinforcement': {'top': '1-D13', 'bottom': '1-D13',
+                               'vertical': '1-D10@250'}},
         ],
         'wall_joins': [],
         'slabs': [
@@ -243,6 +245,7 @@ def make_document() -> dict[str, Any]:
              'boundary': [[0.0, 0.0], [3000.0, 0.0], [3000.0, 2000.0], [0.0, 2000.0]],
              'elevation': 50.0, 'thickness': 150.0,
              'bound': {'story_offset': 0, 'level': '底盤天端', 'offset': 0.0},
+             'reinforcement': {'x': 'D13@200', 'y': 'D13@175'},
              'modifiers': []},
         ],
         'floors': [
@@ -290,14 +293,6 @@ def make_document() -> dict[str, Any]:
              'items': [{'symbol': 'アンカーボルト_M12',
                         'label': '土台用アンカーボルトM12'}]},
         ],
-        'rebars': [
-            {'layer': 'F-立上り', 'class': '04構造-01基礎-09鉄筋',
-             'mode': 'beam', 'closed': False,
-             'path': [[0.0, 0.0, 400.0], [3000.0, 0.0, 400.0]],
-             'section_size': '120×500', 'top_bars': '1-D13',
-             'bottom_bars': '1-D13', 'stirrup': 'D10@250',
-             'main_bar': '', 'dist_bar': '', 'slab_thickness': 0.0},
-        ],
     }
 
 
@@ -308,7 +303,7 @@ class TestExecuteDocument:
         assert counts == {'stories': 3, 'grids': 1, 'members': 1, 'rafters': 1,
                           'roofs': 1,
                           'columns': 1, 'walls': 1, 'wall_joins': 0, 'slabs': 1,
-                          'floors': 1, 'rebars': 1,
+                          'floors': 1,
                           'anchor_bolts': 1, 'floor_posts': 1, 'fire_braces': 1,
                           'joints': 1,
                           'column_marks': 1, 'sheets': 1, 'tags': 0,
@@ -323,12 +318,12 @@ class TestExecuteDocument:
                     'anchor_bolts': [], 'floor_posts': [],
                     'fire_braces': [], 'joints': [], 'sheets': [],
                     'sections': [], 'tags': [],
-                    'column_marks': [], 'legends': [], 'rebars': []}
+                    'column_marks': [], 'legends': []}
         counts = _run_execute_document(vs_mock, document)
         assert counts == {'stories': 0, 'grids': 0, 'members': 0, 'rafters': 0,
                           'roofs': 0,
                           'columns': 0, 'walls': 0, 'wall_joins': 0, 'slabs': 0,
-                          'floors': 0, 'rebars': 0,
+                          'floors': 0,
                           'anchor_bolts': 0, 'floor_posts': 0, 'fire_braces': 0,
                           'joints': 0,
                           'column_marks': 0, 'sheets': 0, 'tags': 0,

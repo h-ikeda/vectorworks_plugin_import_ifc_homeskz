@@ -58,7 +58,6 @@ class Expected:
         column_marks: int,
         rafters: int,
         roofs: int,
-        rebars: int,
         joints: int,
         moya_stories: set[str] | None = None,
         roof_stories: set[str] | None = None,
@@ -86,7 +85,6 @@ class Expected:
         self.rafters = rafters
         # 屋根版から導出した野地板(屋根オブジェクト)の総数(屋根面 1 枚 1 つ)。
         self.roofs = roofs
-        self.rebars = rebars
         # 受ける材のある横架材端部に配置する仕口シンボルの総数。
         self.joints = joints
         # グラフィック凡例数。基礎伏図(基礎があれば 1)+ 各柱梁伏図(床伏図・
@@ -114,8 +112,8 @@ FIXTURES = [
         grids=22,
         members=147,
         columns=138,
-        walls=26,
-        slabs=1,
+        walls=27,
+        slabs=3,
         slab_modifiers=17,
         floors=2,
         anchor_bolts=96,
@@ -125,7 +123,6 @@ FIXTURES = [
         column_marks=10,
         rafters=110,
         roofs=7,
-        rebars=76,
         joints=225,
         legends=6,
         moya_stories={'2階'},
@@ -139,8 +136,8 @@ FIXTURES = [
         grids=25,
         members=266,
         columns=197,
-        walls=45,
-        slabs=2,
+        walls=46,
+        slabs=3,
         slab_modifiers=23,
         floors=4,
         anchor_bolts=110,
@@ -151,7 +148,6 @@ FIXTURES = [
         rafters=54,
         roofs=3,
         roof_stories={'2階'},
-        rebars=106,
         joints=415,
         legends=6,
     ),
@@ -163,8 +159,8 @@ FIXTURES = [
         grids=24,
         members=270,
         columns=141,
-        walls=24,
-        slabs=2,
+        walls=26,
+        slabs=3,
         slab_modifiers=13,
         floors=2,
         anchor_bolts=85,
@@ -174,7 +170,6 @@ FIXTURES = [
         column_marks=8,
         rafters=143,
         roofs=11,
-        rebars=75,
         joints=459,
         legends=6,
         moya_stories={'2階'},
@@ -188,7 +183,7 @@ FIXTURES = [
         grids=22,
         members=196,
         columns=165,
-        walls=15,
+        walls=16,
         slabs=28,
         slab_modifiers=0,
         floors=3,
@@ -199,7 +194,6 @@ FIXTURES = [
         column_marks=16,
         rafters=106,
         roofs=9,
-        rebars=55,
         joints=309,
         legends=8,
         moya_stories={'2階', '3階'},
@@ -213,7 +207,7 @@ FIXTURES = [
         grids=20,
         members=69,
         columns=109,
-        walls=12,
+        walls=13,
         slabs=1,
         slab_modifiers=10,
         floors=3,
@@ -224,7 +218,6 @@ FIXTURES = [
         column_marks=8,
         rafters=54,
         roofs=2,
-        rebars=43,
         joints=95,
         legends=6,
     ),
@@ -494,7 +487,6 @@ class TestSampleIfcAnalysis:
         assert len(document['joints']) == exp.joints
         assert len(document['sheets']) == exp.sheets
         assert len(document['column_marks']) == exp.column_marks
-        assert len(document['rebars']) == exp.rebars
         assert len(document['legends']) == exp.legends
 
     def test_foundation_plan_sheet_references_foundation_layers(
@@ -681,7 +673,6 @@ class TestFullPipeline:
         assert counts['fire_braces'] == len(document['fire_braces'])
         assert counts['joints'] == len(document['joints'])
         assert counts['column_marks'] == len(document['column_marks'])
-        assert counts['rebars'] == len(document['rebars'])
         assert counts['sheets'] == len(document['sheets'])
         assert counts['legends'] == len(document['legends'])
         assert counts['sections'] == len(document['sections'])
@@ -699,7 +690,6 @@ class TestFullPipeline:
         assert counts['fire_braces'] == exp.fire_braces
         assert counts['joints'] == exp.joints
         assert counts['column_marks'] == exp.column_marks
-        assert counts['rebars'] == exp.rebars
         assert counts['sheets'] == exp.sheets
         assert counts['legends'] == exp.legends
 

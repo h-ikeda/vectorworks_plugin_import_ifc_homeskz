@@ -44,6 +44,29 @@ from ..document import SlabCommand, WallCommand, WallJoinCommand
 
 WALL_STYLE_NAME = '基礎 - 木造ベタ基礎150mm'
 
+# --- 配筋レコード(立上り・底盤に配筋情報を持たせる) ---
+# 鉄筋オブジェクトは描かず、配筋情報を立上り(壁)・底盤(スラブ)オブジェクトの
+# レコードに設定してデータタグ等から参照できるようにする(ユーザー指定)。単一の
+# レコードフォーマット ``配筋`` に、立上りは 上端主筋・下端主筋・縦筋、底盤は
+# X 方向・Y 方向 のフィールドを持たせる(立上りは底盤用フィールドを、底盤は立上り用
+# フィールドを空のままにする)。データタグは ``配筋.<フィールド名>`` で参照する。
+_REINFORCEMENT_RECORD = '配筋'
+_FIELD_WALL_TOP = '上端主筋'
+_FIELD_WALL_BOTTOM = '下端主筋'
+_FIELD_WALL_VERTICAL = '縦筋'
+_FIELD_SLAB_X = 'X方向'
+_FIELD_SLAB_Y = 'Y方向'
+# レコードフォーマット ``配筋`` の全フィールド(立上り 3 + 底盤 2)。作成時にこの順で
+# NewField する。データタグはこのうち対象オブジェクトのフィールドを参照する。
+_REINFORCEMENT_FIELDS = (
+    _FIELD_WALL_TOP, _FIELD_WALL_BOTTOM, _FIELD_WALL_VERTICAL,
+    _FIELD_SLAB_X, _FIELD_SLAB_Y,
+)
+# NewField のフィールド型: 4=テキスト(VectorWorks の記録フィールド型。配筋の呼び名は
+# 文字列なのでテキスト型にする)。fFlag=0=表示スタイル既定。VW 上で最終確認する。
+_FIELD_TYPE_TEXT = 4
+_FIELD_DISPLAY_FLAG = 0
+
 # --- スラブスタイル(基礎底盤)の関連付け ---
 # BuildResourceList のスラブスタイル種別 ID(Vectorworks 公式の未公開一覧より)。
 _SLAB_STYLE_RESOURCE_TYPE = 107
@@ -259,6 +282,36 @@ def _draw_beam_solids(modifiers: list[Any], class_name: str) -> None:
             vs.SetObjMaterialHandle(solid, material_handle)
 
 
+def _ensure_reinforcement_record() -> None:
+    """配筋レコードフォーマット ``配筋`` を(無ければ)全フィールド付きで作成する。
+
+    ``NewField`` はレコードが存在しなければ新規作成し、指定フィールドを追加する。
+    レコードが既に存在する場合は(ユーザーが VW 側で用意済みとみなして)何もしない
+    (既存フィールドへ ``NewField`` を重ねると重複しうるため)。フィールドはテキスト型
+    (``_FIELD_TYPE_TEXT``)。``GetObject`` は名前付きリソース(レコードフォーマット)を
+    返すため存在確認に使える。
+    """
+    if vs.GetObject(_REINFORCEMENT_RECORD) != vs.Handle(0):
+        return
+    for field in _REINFORCEMENT_FIELDS:
+        vs.NewField(_REINFORCEMENT_RECORD, field, '',
+                    _FIELD_TYPE_TEXT, _FIELD_DISPLAY_FLAG)
+
+
+def _attach_reinforcement(obj: Any, fields: dict[str, str]) -> None:
+    """オブジェクトに配筋レコード ``配筋`` を関連付け、指定フィールドを設定する。
+
+    レコードフォーマットを(無ければ)作成し、``SetRecord`` で obj にレコード
+    インスタンスを付けてから、``fields``(フィールド名→値)を ``SetRField`` で設定する。
+    立上りは上端主筋・下端主筋・縦筋、底盤は X 方向・Y 方向のフィールドだけを設定し、
+    他方のフィールドは既定(空)のまま残す。
+    """
+    _ensure_reinforcement_record()
+    vs.SetRecord(obj, _REINFORCEMENT_RECORD)
+    for field, value in fields.items():
+        vs.SetRField(obj, _REINFORCEMENT_RECORD, field, value)
+
+
 def draw_wall(command: WallCommand) -> Any:
     """wall 命令 1 件を壁オブジェクトとして描画し、壁ハンドルを返す。
 
@@ -290,6 +343,12 @@ def draw_wall(command: WallCommand) -> Any:
             obj,
             2, bottom['story_offset'], bottom['level'], bottom['offset'],
             2, top['story_offset'], top['level'], top['offset'])
+        reinf = command['reinforcement']
+        _attach_reinforcement(obj, {
+            _FIELD_WALL_TOP: reinf['top'],
+            _FIELD_WALL_BOTTOM: reinf['bottom'],
+            _FIELD_WALL_VERTICAL: reinf['vertical'],
+        })
         vs.ResetObject(obj)
         return obj
     # フォールバック: 壁芯の直線
@@ -484,6 +543,11 @@ def draw_slab(
         bound = command['bound']
         vs.SetObjectStoryBound(
             slab, 0, 2, bound['story_offset'], bound['level'], bound['offset'])
+        reinf = command['reinforcement']
+        _attach_reinforcement(slab, {
+            _FIELD_SLAB_X: reinf['x'],
+            _FIELD_SLAB_Y: reinf['y'],
+        })
         vs.ResetObject(slab)
     else:
         # フォールバック: 外形ポリゴン
