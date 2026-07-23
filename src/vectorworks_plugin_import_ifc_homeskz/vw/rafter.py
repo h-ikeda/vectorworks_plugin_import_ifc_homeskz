@@ -12,7 +12,7 @@
 ``Move3D`` で支持点の絶対位置(XY + 天端 Z)へ移動する(VectorWorks の VectorScript
 エクスポートで確認した配置パターンに従う)。``CreateCustomObject`` はプラグインの
 設定に従いインポート中に設定ダイアログを開いてしまうため、点オブジェクト(柱束伏図
-記号・鉄筋)と同じく ``CreateCustomObjectN`` で ``showPref=False`` を渡す。
+記号)と同じく ``CreateCustomObjectN`` で ``showPref=False`` を渡す。
 勾配(垂木の傾き)は本体の pitch パラメータが担い、始端(支持点・下端基準)から棟側へ
 向かって立ち上がる。設定するフィールドは断面・配置(``type`` / ``width`` / ``height`` /
 ``LineLength`` / ``pitch`` / ``verticalReference``)に加え、2D 表示=幅(``2DDisplay``)・
@@ -23,7 +23,7 @@
 
 配置後は ``SetClass`` で構造クラスを割り当てたうえで、描画属性(太さ・色・パターン・
 透明度等)を ``_set_all_attributes_by_class`` ですべてクラス属性に従わせる(床・野地板・
-柱束伏図記号・鉄筋と同じ規約。``SetClass`` はクラスを割り当てるだけで各描画属性は
+柱束伏図記号と同じ規約。``SetClass`` はクラスを割り当てるだけで各描画属性は
 by-instance の既定値のまま残るため、属性ごとの by-class 設定関数を個別に呼ぶ)。
 
 配置先レイヤが存在しない命令はスキップする(レイヤは story 命令が生成する)。
@@ -74,7 +74,7 @@ def _set_all_attributes_by_class(obj: Any) -> None:
 
     ``SetClass`` はクラスを割り当てるだけで各描画属性は by-instance の既定値のまま残る
     ため、属性ごとの by-class 設定関数を個別に呼ぶ(``vw/floor.py``・``vw/roof.py``・
-    ``vw/column_mark.py``・``vw/rebar.py`` と同じ規約)。
+    ``vw/column_mark.py`` と同じ規約)。
     """
     vs.SetPenColorByClass(obj)
     vs.SetFillColorByClass(obj)

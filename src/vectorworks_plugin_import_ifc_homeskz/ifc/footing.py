@@ -45,6 +45,7 @@ from ..document import (
     WallJoinCommand,
 )
 from .grid import resolve_lines
+from .reinforcement import slab_reinforcement, wall_reinforcement
 from .story import (
     FOUNDATION_SUFFIX,
     LAYER_FOUNDATION_ANCHOR,
@@ -673,6 +674,7 @@ def build_wall_commands(
             'thickness': thickness,
             'bottom_bound': bottom_bound,
             'top_bound': top_bound,
+            'reinforcement': wall_reinforcement(element),
         })
     walls = _extend_free_wall_ends(merge_wall_commands(commands), columns)
     # 人通口(立上りに開けた開口)の削り取り区間を、マージ・端部延長済みの立上りに
@@ -691,18 +693,22 @@ def build_wall_commands(
 def _wall_section_key(wall: WallCommand) -> tuple[object, ...]:
     """立上りの断面形状(統合可否)を表すキー。
 
-    レイヤ・クラス・壁厚・下端/上端の高さ基準(story_offset・level・offset)が
-    すべて一致する立上り同士だけを統合対象にする。offset は実 Z 由来の浮動小数
-    のため許容値で丸める(``_WALL_MERGE_DIST_TOL`` = 1mm)。
+    レイヤ・クラス・壁厚・下端/上端の高さ基準(story_offset・level・offset)・
+    配筋(上端主筋・下端主筋・縦筋)がすべて一致する立上り同士だけを統合対象にする。
+    offset は実 Z 由来の浮動小数のため許容値で丸める(``_WALL_MERGE_DIST_TOL`` =
+    1mm)。配筋を含めるのは、配筋の異なる立上りを 1 本に統合すると片方の配筋情報が
+    失われるため(統合後は先頭の配筋を引き継ぐ)。
     """
     bottom = wall['bottom_bound']
     top = wall['top_bound']
+    reinf = wall['reinforcement']
     return (
         wall['layer'], wall['class'], round(wall['thickness'], 3),
         bottom['story_offset'], bottom['level'],
         round(bottom['offset'] / _WALL_MERGE_DIST_TOL),
         top['story_offset'], top['level'],
         round(top['offset'] / _WALL_MERGE_DIST_TOL),
+        reinf['top'], reinf['bottom'], reinf['vertical'],
     )
 
 
@@ -788,6 +794,7 @@ def _merge_wall_group(walls: list[WallCommand]) -> list[WallCommand]:
             'thickness': base['thickness'],
             'bottom_bound': base['bottom_bound'],
             'top_bound': base['top_bound'],
+            'reinforcement': base['reinforcement'],
         }
         merged.append(command)
     return merged
@@ -988,6 +995,7 @@ def _extend_free_wall_ends(
             'thickness': wall['thickness'],
             'bottom_bound': wall['bottom_bound'],
             'top_bound': wall['top_bound'],
+            'reinforcement': wall['reinforcement'],
         })
     return extended
 
@@ -1065,6 +1073,7 @@ def _carve_wall_opening(
             'thickness': wall['thickness'],
             'bottom_bound': wall['bottom_bound'],
             'top_bound': top_bound,
+            'reinforcement': wall['reinforcement'],
         }
 
     segments: list[WallCommand] = []
@@ -1388,6 +1397,11 @@ def build_slab_commands(
         bound: StoryBoundCommand = {
             'story_offset': 0, 'level': LEVEL_SLAB_TOP,
             'offset': top_abs - slab_top_abs}
+        # 短辺方向・長辺方向 → グローバル X・Y の割り当てに底盤の平面 extent を使う。
+        xs = [x for x, _y in boundary]
+        ys = [y for _x, y in boundary]
+        extent_x = max(xs) - min(xs)
+        extent_y = max(ys) - min(ys)
         commands.append({
             'layer': LAYER_FOUNDATION_SLAB,
             'class': CLASS_FOUNDATION_SLAB,
@@ -1395,6 +1409,7 @@ def build_slab_commands(
             'elevation': top_abs,
             'thickness': float(round(thickness)),
             'bound': bound,
+            'reinforcement': slab_reinforcement(element, extent_x, extent_y),
             'modifiers': [],
         })
     if walls is None:
@@ -1744,14 +1759,18 @@ _Pt2 = tuple[float, float]
 
 
 def _slab_merge_key(slab: SlabCommand) -> tuple[object, ...]:
-    """底盤の統合可否を表すキー。レイヤ・クラス・コンクリート厚・高さ基準が
-    すべて一致する底盤同士だけを統合対象にする(offset は許容値で丸める)。"""
+    """底盤の統合可否を表すキー。レイヤ・クラス・コンクリート厚・高さ基準・配筋
+    (X 方向・Y 方向)がすべて一致する底盤同士だけを統合対象にする(offset は許容値で
+    丸める)。配筋を含めるのは、配筋の異なる底盤を 1 枚に統合すると片方の配筋情報が
+    失われるため(統合後は先頭の配筋を引き継ぐ)。"""
     thickness = slab['thickness']
     bound = slab['bound']
+    reinf = slab['reinforcement']
     return (
         slab['layer'], slab['class'], round(thickness or 0.0, 3),
         bound['story_offset'], bound['level'],
         round(bound['offset'] / _SLAB_MERGE_TOL),
+        reinf['x'], reinf['y'],
     )
 
 
@@ -2098,6 +2117,7 @@ def merge_slab_commands(slabs: list[SlabCommand]) -> list[SlabCommand]:
                 'elevation': base['elevation'],
                 'thickness': base['thickness'],
                 'bound': base['bound'],
+                'reinforcement': base['reinforcement'],
                 'modifiers': [],
             }
             merged_at.setdefault(first, []).append(merged)
@@ -2250,6 +2270,7 @@ def align_slabs_to_wall_faces(
             'elevation': slab['elevation'],
             'thickness': slab['thickness'],
             'bound': slab['bound'],
+            'reinforcement': slab['reinforcement'],
             'modifiers': slab.get('modifiers', []),
         })
     return result
